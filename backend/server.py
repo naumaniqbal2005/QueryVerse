@@ -24,6 +24,14 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL_NAME = "llama-3.1-8b-instant"
 
+# Import simple name matcher
+from simple_matcher import SimpleNameMatcher
+
+# Initialize simple matcher
+print("Initializing simple name matcher...")
+name_matcher = SimpleNameMatcher()
+print("Simple name matcher ready!")
+
 
 DATABASE_SCHEMA = """Game Rental DB:Admins(AdminID PK:int,FullName:str,Email:str,AccessLevel:str);Categories(CategoryID PK:int,CategoryName:str);Games(GameID PK:int,GameTitle:str,Platform:str,Genre:str,TotalStock:int,CategoryID FK->Categories.CategoryID:int);GameCopies(CopyID PK:int,GameID FK->Games.GameID:int,CopyCondition:str,Availability:str);Users(UserID PK:int,FullName:str,Email:str,AccountStatus:str);Rentals(RentalID PK:int,UserID FK->Users.UserID:int,CopyID FK->GameCopies.CopyID:int,DateIssued:str,DateDue:str);Penalties(PenaltyID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,PenaltyAmount:decimal,PenaltyReason:str);Reviews(ReviewID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,Rating:int,ReviewText:str);Transactions(TransactionID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,AdminID FK->Admins.AdminID:int,Amount:decimal,TransactionDate:str);UnreleasedCatalog(UnreleasedID PK:int,GameTitle:str,ExpectedRelease:str);UserInterests(InterestID PK:int,UserID FK->Users.UserID:int,UnreleasedID FK->UnreleasedCatalog.UnreleasedID:int,RequestTime:str);Waitlist(WaitlistID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,RequestTime:str)"""
 
@@ -53,8 +61,8 @@ class HealthResponse(BaseModel):
 def execute_sql_query(sql_query):
     """Execute SQL query on the database and return results."""
     try:
-        # Look for mydb.db in the parent directory (main project folder)
-        db_path = os.path.join("..", "mydb.db")
+        # Look for mydb.db in the current directory (backend folder)
+        db_path = "mydb.db"
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute(sql_query)
@@ -123,14 +131,18 @@ async def chat(request: ChatRequest):
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
+    # Enhance query with simple name matching
+    original_message = request.message
+    enhanced_message = name_matcher.enhance_query(original_message)
+    
     chat_history = request.chat_history.copy()
-    chat_history.append({"role": "user", "content": request.message})
+    chat_history.append({"role": "user", "content": enhanced_message})
 
     try:
         # Step 1: Generate SQL query
         sql_messages = [
             {"role": "system", "content": SQL_GENERATOR_PROMPT},
-            {"role": "user", "content": request.message}
+            {"role": "user", "content": enhanced_message}
         ]
         
         sql_query, sql_input_tokens, sql_output_tokens = query_groq(sql_messages, 0.1)  # Low temperature for consistent SQL
@@ -144,7 +156,7 @@ async def chat(request: ChatRequest):
         if sql_query.endswith("```"):
             sql_query = sql_query[:-3]
         
-        # Remove any explanatory text after the SQL statement
+        # Remove any explanatory text after SQL statement
         if ';' in sql_query:
             sql_query = sql_query.split(';')[0] + ';'
         else:
@@ -178,7 +190,7 @@ async def chat(request: ChatRequest):
             
             response_messages = [
                 {"role": "system", "content": RESPONSE_GENERATOR_PROMPT},
-                {"role": "user", "content": f"Question: {request.message}\nSQL Query: {sql_query}\nResults: {results_str}"}
+                {"role": "user", "content": f"Question: {enhanced_message}\nSQL Query: {sql_query}\nResults: {results_str}"}
             ]
             
             response, resp_input_tokens, resp_output_tokens = query_groq(response_messages, request.temperature)
