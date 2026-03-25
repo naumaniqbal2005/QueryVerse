@@ -4,113 +4,161 @@ import './App.css';
 
 // Home Page Component
 function HomePage({ navHidden }) {
+  const [scrollClass, setScrollClass] = useState('');
+  const greekTitleRef = useRef(null);
+  const queryRef = useRef(null);
+  const verseRef = useRef(null);
+  const previousScrollClass = useRef('');
+
+  // FLIP technique for smooth morphing
+  const applyFlipAnimation = (isAddingFadeOut) => {
+    if (!queryRef.current || !verseRef.current) return;
+
+    const words = [queryRef.current, verseRef.current];
+    
+    // First: Get initial positions
+    const first = words.map(el => el.getBoundingClientRect());
+    
+    // Last: Apply layout change and get new positions
+    if (isAddingFadeOut) {
+      // Temporarily apply the fade-out class to measure
+      const container = greekTitleRef.current;
+      container.classList.add('fade-out');
+      const last = words.map(el => el.getBoundingClientRect());
+      container.classList.remove('fade-out');
+      
+      // Invert: Apply transforms to keep elements in original positions
+      words.forEach((el, i) => {
+        const dx = first[i].left - last[i].left;
+        const dy = first[i].top - last[i].top;
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+      });
+      
+      // Play: Animate to new positions
+      requestAnimationFrame(() => {
+        words.forEach(el => {
+          el.style.transition = 'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+          el.style.transform = '';
+        });
+      });
+    } else {
+      // Reverse animation
+      const container = greekTitleRef.current;
+      container.classList.add('fade-out');
+      const last = words.map(el => el.getBoundingClientRect());
+      container.classList.remove('fade-out');
+      
+      // Invert for reverse
+      words.forEach((el, i) => {
+        const dx = last[i].left - first[i].left;
+        const dy = last[i].top - first[i].top;
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+      });
+      
+      // Play reverse animation
+      requestAnimationFrame(() => {
+        words.forEach(el => {
+          el.style.transition = 'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+          el.style.transform = '';
+        });
+      });
+    }
+  };
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollY = window.scrollY;
+      let newScrollClass = '';
+      
+      if (scrollY > 300) {
+        newScrollClass = 'fade-out';
+      } else if (scrollY < 250) {
+        newScrollClass = '';
+      }
+      
+      // Only apply FLIP animation when class actually changes
+      if (newScrollClass !== previousScrollClass.current) {
+        const isAddingFadeOut = newScrollClass === 'fade-out';
+        applyFlipAnimation(isAddingFadeOut);
+        previousScrollClass.current = newScrollClass;
+      }
+      
+      setScrollClass(newScrollClass);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   return (
-    <div className="home-page">
-      <div className="hero-section">
-        <div className="hero-content">
-          <h1 className="hero-title">Database Assistant</h1>
-          <p className="hero-subtitle">Natural Language Database Queries Powered by AI</p>
-          <p className="hero-description">
-            Transform your database interactions with intelligent natural language processing. 
-            Ask questions in plain English and get instant, accurate responses from your database.
-          </p>
-          <button className="cta-button" onClick={() => window.location.hash = '#chat'}>
-            Start Chatting →
-          </button>
+    <div className="brutalist-home">
+      {/* Header Navigation */}
+      <header className="brutalist-header">
+        <div className="nav-left">DATABASE ASSISTANT</div>
+        <div className="nav-right">
+          <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>HOME</span>
+          <span>ABOUT</span>
+          <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>CHAT</span>
+          <span className="nav-cta">SEND INQUIRY {'>'}</span>
         </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="brutalist-main">
+        {/* Interactive Hero Image */}
         <div className="hero-visual">
-          <div className="demo-interface">
-            <div className="demo-header">
-              <div className="demo-dots">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-              <div className="demo-title">Database Assistant</div>
+          <img 
+            src="/images/file.svg" 
+            alt="Database Visualization" 
+            className={`database-hero ${scrollClass}`} 
+          />
+          
+          {/* Greek-style Overlays */}
+          <div className="greek-overlays">
+            <div ref={greekTitleRef} className={`greek-title ${scrollClass}`}>
+              <div ref={queryRef} className="greek-query">QUERY</div>
+              <div ref={verseRef} className="greek-verse">VERSE</div>
             </div>
-            <div className="demo-messages">
-              <div className="demo-message user">
-                <div className="demo-avatar">U</div>
-                <div className="demo-content">How many active users do we have?</div>
-              </div>
-              <div className="demo-message assistant">
-                <div className="demo-avatar">A</div>
-                <div className="demo-content">There are 7 active users in the database.</div>
-              </div>
-            </div>
-            <div className="demo-input">
-              <div className="demo-input-field">Ask anything about your database...</div>
-              <div className="demo-send-button">Send</div>
-            </div>
+            <div className={`greek-subtitle ${scrollClass}`}>Ἡ ΠΥΞΙΑ ΤΗΣ ΓΝΩΣΗΣΣΗΣ</div>
           </div>
         </div>
-      </div>
 
-      <div className="features-section">
-        <div className="container">
-          <h2 className="section-title">Powerful Features</h2>
-          <div className="features-grid">
+        {/* Extended Content Cards */}
+        <div className={`extended-content ${scrollClass}`}>
+          <div className="content-grid">
             <div className="feature-card">
-              <div className="feature-icon">🧠</div>
-              <h3>Natural Language Processing</h3>
-              <p>Ask questions in plain English. No SQL knowledge required.</p>
+              <h3>Natural Language Queries</h3>
+              <p>Ask questions in plain English, no SQL knowledge required</p>
             </div>
             <div className="feature-card">
-              <div className="feature-icon">⚡</div>
-              <h3>Lightning Fast</h3>
-              <p>Get instant responses with optimized token usage and efficient queries.</p>
+              <h3>Real-time Processing</h3>
+              <p>Get instant responses with optimized token usage</p>
             </div>
             <div className="feature-card">
-              <div className="feature-icon">🎯</div>
               <h3>Accurate Results</h3>
-              <p>Precise SQL generation and reliable data retrieval every time.</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">📊</div>
-              <h3>Token Tracking</h3>
-              <p>Monitor API usage with detailed token analytics and insights.</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🔒</div>
-              <h3>Secure & Private</h3>
-              <p>Your data stays secure with local database storage.</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🎨</div>
-              <h3>Modern Interface</h3>
-              <p>Clean, intuitive design inspired by the best AI assistants.</p>
+              <p>Precise SQL generation and reliable data retrieval</p>
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="tech-section">
-        <div className="container">
-          <h2 className="section-title">Technology Stack</h2>
-          <div className="tech-grid">
-            <div className="tech-item">
-              <div className="tech-logo">🐍</div>
-              <h4>FastAPI</h4>
-              <p>High-performance backend framework</p>
-            </div>
-            <div className="tech-item">
-              <div className="tech-logo">⚛️</div>
-              <h4>React</h4>
-              <p>Modern frontend library</p>
-            </div>
-            <div className="tech-item">
-              <div className="tech-logo">🤖</div>
-              <h4>GROQ AI</h4>
-              <p>Advanced language model</p>
-            </div>
-            <div className="tech-item">
-              <div className="tech-logo">🗄️</div>
-              <h4>SQLite</h4>
-              <p>Reliable database storage</p>
-            </div>
+        {/* Preview Card - Bottom Left */}
+        <div className="preview-card">
+          <div className="preview-overlay">QUERY INTERFACE</div>
+        </div>
+
+        {/* Sidebar - Right */}
+        <div className="right-sidebar">
+          <div className="sidebar-text">
+            <div className="sidebar-initial">D.</div>
+            <div className="sidebar-label">Database</div>
           </div>
         </div>
-      </div>
+
+        {/* Footer - Bottom Right */}
+        <div className="brutalist-footer">
+          <div className="scroll-text">KEEP SCROLLING</div>
+        </div>
+      </main>
     </div>
   );
 }
@@ -504,10 +552,10 @@ function App() {
       starsContainer.style.width = '100%';
       starsContainer.style.height = '100%';
       starsContainer.style.pointerEvents = 'none';
-      starsContainer.style.zIndex = '0';
+      starsContainer.style.zIndex = '4';
       document.body.appendChild(starsContainer);
 
-      for (let i = 0; i < 25; i++) {
+      for (let i = 0; i < 35; i++) {
         const star = document.createElement('div');
         star.className = 'star';
         
@@ -537,23 +585,6 @@ function App() {
 
   return (
     <div className="app-wrapper">
-      <nav className={`navigation ${navHidden ? 'hidden' : ''}`}>
-        <div className="nav-links">
-          <a 
-            href="#home" 
-            className={`nav-link ${currentPage === '#home' ? 'active' : ''}`}
-          >
-            Home
-          </a>
-          <a 
-            href="#chat" 
-            className={`nav-link ${currentPage === '#chat' ? 'active' : ''}`}
-          >
-            Chat
-          </a>
-        </div>
-      </nav>
-
       {currentPage === '#home' && <HomePage navHidden={navHidden} />}
       {currentPage === '#chat' && <ChatPage navHidden={navHidden} />}
     </div>
