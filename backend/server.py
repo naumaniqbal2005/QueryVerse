@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import os
@@ -8,6 +9,15 @@ import sqlite3
 import json
 import uvicorn
 from dotenv import load_dotenv
+from supabase_routes import (
+    create_user, get_user,
+    create_chat, get_chat, list_user_chats, update_chat, delete_chat,
+    upload_database_file, get_database, list_user_databases, download_database_file, delete_database,
+    create_message, get_chat_messages, delete_message,
+    link_database_to_chat, unlink_database_from_chat, get_chat_databases,
+    load_session
+)
+from auth_routes import router as auth_router, get_current_user_dependency
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,6 +32,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include auth router
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+
+# Security scheme for JWT
+security = HTTPBearer()
 
 # Load GROQ API key from environment variable
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -241,8 +257,18 @@ async def upload_schema(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Error processing schema: {str(e)}")
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """Handle chat requests with database queries."""
+async def chat(request: ChatRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Handle chat requests with database queries - requires authentication"""
+    # Verify JWT token
+    token = credentials.credentials
+    try:
+        from auth_utils import decode_access_token
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Authentication failed")
+    
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
@@ -343,6 +369,113 @@ async def chat(request: ChatRequest):
         chat_history=chat_history,
         tokens_used=tokens_used
     )
+
+# ============ Supabase CRUD Endpoints ============
+
+# User endpoints
+@app.post("/supabase/users")
+async def api_create_user(user: dict):
+    """Create a new user"""
+    return await create_user(user)
+
+@app.get("/supabase/users/{user_id}")
+async def api_get_user(user_id: str):
+    """Get user by ID"""
+    return await get_user(user_id)
+
+# Chat endpoints
+@app.post("/supabase/chats")
+async def api_create_chat(chat: dict, user_id: str):
+    """Create a new chat for a user"""
+    return await create_chat(chat, user_id)
+
+@app.get("/supabase/chats/{chat_id}")
+async def api_get_chat(chat_id: str):
+    """Get chat by ID"""
+    return await get_chat(chat_id)
+
+@app.get("/supabase/users/{user_id}/chats")
+async def api_list_user_chats(user_id: str):
+    """List all chats for a user"""
+    return await list_user_chats(user_id)
+
+@app.put("/supabase/chats/{chat_id}")
+async def api_update_chat(chat_id: str, title: str):
+    """Update chat title"""
+    return await update_chat(chat_id, title)
+
+@app.delete("/supabase/chats/{chat_id}")
+async def api_delete_chat(chat_id: str):
+    """Delete a chat"""
+    return await delete_chat(chat_id)
+
+# Database endpoints
+@app.post("/supabase/databases/upload")
+async def api_upload_database(
+    file: UploadFile = File(...),
+    user_id: str = None,
+    name: str = None
+):
+    """Upload database file to Supabase Storage"""
+    return await upload_database_file(file, user_id, name)
+
+@app.get("/supabase/databases/{database_id}")
+async def api_get_database(database_id: str):
+    """Get database by ID"""
+    return await get_database(database_id)
+
+@app.get("/supabase/users/{user_id}/databases")
+async def api_list_user_databases(user_id: str):
+    """List all databases for a user"""
+    return await list_user_databases(user_id)
+
+@app.get("/supabase/databases/{database_id}/download")
+async def api_download_database(database_id: str):
+    """Download database file from Supabase Storage"""
+    return await download_database_file(database_id)
+
+@app.delete("/supabase/databases/{database_id}")
+async def api_delete_database(database_id: str):
+    """Delete a database"""
+    return await delete_database(database_id)
+
+# Message endpoints
+@app.post("/supabase/messages")
+async def api_create_message(message: dict, chat_id: str):
+    """Create a new message in a chat"""
+    return await create_message(message, chat_id)
+
+@app.get("/supabase/chats/{chat_id}/messages")
+async def api_get_chat_messages(chat_id: str):
+    """Get all messages for a chat"""
+    return await get_chat_messages(chat_id)
+
+@app.delete("/supabase/messages/{message_id}")
+async def api_delete_message(message_id: str):
+    """Delete a message"""
+    return await delete_message(message_id)
+
+# Chat-Database relationship endpoints
+@app.post("/supabase/chats/{chat_id}/databases/{database_id}")
+async def api_link_database_to_chat(chat_id: str, database_id: str):
+    """Link a database to a chat"""
+    return await link_database_to_chat(chat_id, database_id)
+
+@app.delete("/supabase/chats/{chat_id}/databases/{database_id}")
+async def api_unlink_database_from_chat(chat_id: str, database_id: str):
+    """Unlink a database from a chat"""
+    return await unlink_database_from_chat(chat_id, database_id)
+
+@app.get("/supabase/chats/{chat_id}/databases")
+async def api_get_chat_databases(chat_id: str):
+    """Get all databases linked to a chat"""
+    return await get_chat_databases(chat_id)
+
+# Session loading endpoint
+@app.get("/supabase/sessions/{chat_id}")
+async def api_load_session(chat_id: str):
+    """Load a complete session (chat, messages, and databases)"""
+    return await load_session(chat_id)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

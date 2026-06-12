@@ -121,6 +121,116 @@ body.inverted .theme-toggle {
   filter: invert(100%);
 }
 
+/* Chat Management UI */
+.chat-management-header {
+  display: flex;
+  gap: 10px;
+  padding: 10px 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--border-color);
+  align-items: center;
+}
+
+.chat-list-toggle,
+.new-chat-button,
+.save-chat-button {
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.chat-list-toggle:hover,
+.new-chat-button:hover,
+.save-chat-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.chat-list-sidebar {
+  position: fixed;
+  left: 0;
+  top: 60px;
+  width: 280px;
+  height: calc(100vh - 60px);
+  background: rgba(0, 0, 0, 0.95);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.chat-list-header {
+  padding: 15px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.chat-list-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.chat-list-items {
+  padding: 10px;
+}
+
+.no-chats {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.chat-list-item {
+  padding: 12px 15px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chat-list-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateX(2px);
+}
+
+.chat-list-item.active {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: var(--accent-color);
+}
+
+.chat-item-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-color);
+  margin-bottom: 4px;
+}
+
+.chat-item-date {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.logout-button {
+  padding: 8px 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.logout-button:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
 /* Brutalist Home Page Styles */
 .brutalist-home {
   background-color: transparent;

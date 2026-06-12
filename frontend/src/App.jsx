@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
+import './Auth.css';
+import { chatService, messageService, databaseService, chatDatabaseService, sessionService } from './supabaseService';
+import authService from './authService';
+import LoginPage from './LoginPage';
 
 // Home Page Component
 function HomePage({ navHidden }) {
@@ -187,7 +191,7 @@ function HomePage({ navHidden }) {
 }
 
 // Chat Component
-function ChatPage({ navHidden }) {
+function ChatPage({ navHidden, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [temperature, setTemperature] = useState(0.7);
@@ -195,31 +199,152 @@ function ChatPage({ navHidden }) {
   const [tokensUsed, setTokensUsed] = useState(null);
   const [schemaInfo, setSchemaInfo] = useState(null);
   const [isUploadingSchema, setIsUploadingSchema] = useState(false);
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [chatList, setChatList] = useState([]);
+  const [showChatList, setShowChatList] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Load chat state from localStorage on mount
+  // Initialize user ID from auth
   useEffect(() => {
-    const savedState = localStorage.getItem('chatState');
-    if (savedState) {
-      try {
-        const parsed = JSON.parse(savedState);
-        setMessages(parsed.messages || []);
-        setInput(parsed.input || '');
-        setTemperature(parsed.temperature || 0.7);
-        setTokensUsed(parsed.tokensUsed || null);
-      } catch (e) {
-        console.error('Failed to load chat state:', e);
-      }
+    const currentUser = authService.getCurrentUser();
+    if (currentUser) {
+      setUserId(currentUser.id);
+      loadUserChats(currentUser.id);
     }
   }, []);
 
-  // Save chat state to localStorage whenever it changes
+  // Load user's chats
+  const loadUserChats = async (uid) => {
+    try {
+      const chats = await chatService.listUserChats(uid);
+      setChatList(chats);
+    } catch (error) {
+      console.error('Failed to load chats:', error);
+    }
+  };
+
+  // Load chat state from localStorage on mount (fallback for non-Supabase)
   useEffect(() => {
-    const state = { messages, input, temperature, tokensUsed };
-    localStorage.setItem('chatState', JSON.stringify(state));
-  }, [messages, input, temperature, tokensUsed]);
+    if (!currentChatId) {
+      const savedState = localStorage.getItem('chatState');
+      if (savedState) {
+        try {
+          const parsed = JSON.parse(savedState);
+          setMessages(parsed.messages || []);
+          setInput(parsed.input || '');
+          setTemperature(parsed.temperature || 0.7);
+          setTokensUsed(parsed.tokensUsed || null);
+        } catch (e) {
+          console.error('Failed to load chat state:', e);
+        }
+      }
+    }
+  }, [currentChatId]);
+
+  // Save chat state to localStorage whenever it changes (fallback)
+  useEffect(() => {
+    if (!currentChatId) {
+      const state = { messages, input, temperature, tokensUsed };
+      localStorage.setItem('chatState', JSON.stringify(state));
+    }
+  }, [messages, input, temperature, tokensUsed, currentChatId]);
+
+  // Create new chat
+  const createNewChat = async () => {
+    try {
+      const newChat = await chatService.createChat({ title: 'New Chat' }, userId);
+      setCurrentChatId(newChat.id);
+      setMessages([]);
+      setTokensUsed(null);
+      loadUserChats(userId);
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+    }
+  };
+
+  // Load existing chat
+  const loadChat = async (chatId) => {
+    try {
+      setIsLoading(true);
+      const session = await sessionService.loadSession(chatId);
+      
+      // Parse messages from Supabase format
+      const parsedMessages = session.messages.map(msg => ({
+        role: msg.role === 'u' ? 'user' : 'assistant',
+        content: msg.content,
+        tokens_used: msg.tokens_used ? JSON.parse(msg.tokens_used) : null
+      }));
+      
+      setMessages(parsedMessages);
+      setCurrentChatId(chatId);
+      
+      // Load database files from storage and set up the database
+      if (session.databases && session.databases.length > 0) {
+        for (const dbInfo of session.databases) {
+          try {
+            // Download database file from Supabase Storage
+            const dbData = await databaseService.downloadDatabase(dbInfo.id);
+            
+            // Create a Blob from the file data
+            const blob = new Blob([dbData.fileData], { type: 'application/x-sqlite3' });
+            const file = new File([blob], dbInfo.fileName, { type: 'application/x-sqlite3' });
+            
+            // Upload to backend to set up the database
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const uploadResponse = await axios.post('http://localhost:8000/upload-schema', formData, {
+              headers: {
+                'Content-Type': 'multipart/form-data'
+              }
+            });
+            
+            setSchemaInfo({
+              status: uploadResponse.data.status,
+              message: uploadResponse.data.message,
+              schema: uploadResponse.data.db_schema,
+              tables: uploadResponse.data.tables
+            });
+            
+            console.log(`Database ${dbInfo.name} loaded successfully`);
+          } catch (dbError) {
+            console.error(`Failed to load database ${dbInfo.name}:`, dbError);
+          }
+        }
+      }
+      
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Failed to load chat:', error);
+      setIsLoading(false);
+    }
+  };
+
+  // Save current chat to Supabase
+  const saveCurrentChat = async () => {
+    if (!currentChatId || !userId) return;
+    
+    try {
+      // Convert messages to Supabase format
+      const supabaseMessages = messages.map(msg => ({
+        role: msg.role === 'user' ? 'u' : 'a',
+        content: msg.content,
+        tokens_used: msg.tokens_used
+      }));
+      
+      // Save messages
+      for (const msg of supabaseMessages) {
+        await messageService.createMessage(msg, currentChatId);
+      }
+      
+      console.log('Chat saved successfully');
+    } catch (error) {
+      console.error('Failed to save chat:', error);
+    }
+  };
 
   // Auto-resize textarea
   useEffect(() => {
@@ -249,19 +374,45 @@ function ChatPage({ navHidden }) {
     setTokensUsed(null);
 
     try {
+      const headers = authService.getAuthHeaders();
       const response = await axios.post('http://localhost:8000/chat', {
         message: input,
         chat_history: messages,
         temperature: temperature
-      });
+      }, { headers });
 
       const assistantMessage = { 
         role: 'assistant', 
-        content: response.data.response 
+        content: response.data.response,
+        tokens_used: response.data.tokens_used
       };
       
       setMessages([...newMessages, assistantMessage]);
       setTokensUsed(response.data.tokens_used);
+
+      // Auto-save to Supabase if chat exists
+      if (currentChatId) {
+        try {
+          await messageService.createMessage(
+            {
+              role: 'u',
+              content: input,
+              tokens_used: null
+            },
+            currentChatId
+          );
+          await messageService.createMessage(
+            {
+              role: 'a',
+              content: response.data.response,
+              tokens_used: response.data.tokens_used
+            },
+            currentChatId
+          );
+        } catch (saveError) {
+          console.error('Failed to save message to Supabase:', saveError);
+        }
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       const errorMessage = { 
@@ -284,6 +435,10 @@ function ChatPage({ navHidden }) {
   const clearChat = () => {
     setMessages([]);
     setTokensUsed(null);
+    if (!currentChatId) {
+      // Only clear localStorage if not using Supabase
+      localStorage.removeItem('chatState');
+    }
   };
 
   const handleSchemaUpload = async (event) => {
@@ -366,6 +521,51 @@ function ChatPage({ navHidden }) {
 
   return (
     <div className="app">
+      {/* Chat Management Header */}
+      <div className="chat-management-header">
+        <button onClick={() => setShowChatList(!showChatList)} className="chat-list-toggle">
+          {showChatList ? '▼' : '▶'} Chats
+        </button>
+        <button onClick={createNewChat} className="new-chat-button">
+          + New Chat
+        </button>
+        {currentChatId && (
+          <button onClick={saveCurrentChat} className="save-chat-button">
+            💾 Save
+          </button>
+        )}
+        <button onClick={onLogout} className="logout-button">
+          Logout
+        </button>
+      </div>
+
+      {/* Chat List Sidebar */}
+      {showChatList && (
+        <div className="chat-list-sidebar">
+          <div className="chat-list-header">
+            <h3>Your Chats</h3>
+          </div>
+          <div className="chat-list-items">
+            {chatList.length === 0 ? (
+              <div className="no-chats">No saved chats yet</div>
+            ) : (
+              chatList.map(chat => (
+                <div 
+                  key={chat.id} 
+                  className={`chat-list-item ${currentChatId === chat.id ? 'active' : ''}`}
+                  onClick={() => loadChat(chat.id)}
+                >
+                  <div className="chat-item-title">{chat.title}</div>
+                  <div className="chat-item-date">
+                    {new Date(chat.created_at).toLocaleDateString()}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {messages.length === 0 ? (
         <div className="welcome-screen">
           <div className="welcome-text">
@@ -568,6 +768,7 @@ function App() {
   });
   const [navHidden, setNavHidden] = useState(false);
   const [isInverted, setIsInverted] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(authService.isAuthenticated());
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -581,6 +782,16 @@ function App() {
   const toggleTheme = () => {
     setIsInverted(!isInverted);
     document.body.classList.toggle('inverted');
+  };
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    authService.logout();
+    setIsAuthenticated(false);
+    setCurrentPage('#home');
   };
 
   useEffect(() => {
@@ -693,7 +904,13 @@ function App() {
         {isInverted ? '☀️' : '🌙'}
       </button>
       {currentPage === '#home' && <HomePage navHidden={navHidden} />}
-      {currentPage === '#chat' && <ChatPage navHidden={navHidden} />}
+      {currentPage === '#chat' && (
+        isAuthenticated ? (
+          <ChatPage navHidden={navHidden} onLogout={handleLogout} />
+        ) : (
+          <LoginPage onLogin={handleLogin} />
+        )
+      )}
     </div>
   );
 }

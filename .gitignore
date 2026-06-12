@@ -6,10 +6,14 @@ pass.txt
 test.sql
 # Ignore dependencies
 node_modules/
-
+supabase_migration.sql
+SUPABASE_SETUP.md
 # Ignore build outputs
 dist/
 build/
+
+frontend/node_modules/.package-lock.json
+frontend/node_modules/.vite/deps/_metadata.json
 
 # Ignore environment files
 .env

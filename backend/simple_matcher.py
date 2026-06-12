@@ -19,19 +19,25 @@ class SimpleNameMatcher:
     
     def load_data(self):
         """Load exact names from database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        # Load games
-        cursor.execute("SELECT GameTitle FROM Games")
-        self.games = [row[0] for row in cursor.fetchall()]
-        
-        # Load users
-        cursor.execute("SELECT FullName FROM Users")
-        self.users = [row[0] for row in cursor.fetchall()]
-        
-        conn.close()
-        print(f"Loaded {len(self.games)} games and {len(self.users)} users")
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Load games
+            cursor.execute("SELECT GameTitle FROM Games")
+            self.games = [row[0] for row in cursor.fetchall()]
+            
+            # Load users
+            cursor.execute("SELECT FullName FROM Users")
+            self.users = [row[0] for row in cursor.fetchall()]
+            
+            conn.close()
+            print(f"Loaded {len(self.games)} games and {len(self.users)} users from database")
+        except sqlite3.OperationalError as e:
+            print(f"Warning: Could not load data from database: {e}")
+            print("Name matching will be disabled until a database is uploaded")
+            self.games = []
+            self.users = []
     
     def find_match(self, query_text, threshold=0.6):
         """Find best match using simple string similarity"""
