@@ -193,8 +193,11 @@ function ChatPage({ navHidden }) {
   const [temperature, setTemperature] = useState(0.7);
   const [isLoading, setIsLoading] = useState(false);
   const [tokensUsed, setTokensUsed] = useState(null);
+  const [schemaInfo, setSchemaInfo] = useState(null);
+  const [isUploadingSchema, setIsUploadingSchema] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Load chat state from localStorage on mount
   useEffect(() => {
@@ -281,6 +284,40 @@ function ChatPage({ navHidden }) {
   const clearChat = () => {
     setMessages([]);
     setTokensUsed(null);
+  };
+
+  const handleSchemaUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setIsUploadingSchema(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await axios.post('http://localhost:8000/upload-schema', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      setSchemaInfo({
+        status: response.data.status,
+        message: response.data.message,
+        schema: response.data.schema,
+        tables: response.data.tables
+      });
+
+      // Clear the file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (error) {
+      console.error('Error uploading schema:', error);
+      alert(`Error uploading schema: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setIsUploadingSchema(false);
+    }
   };
 
   const formatTokens = (tokens) => {
@@ -426,6 +463,43 @@ function ChatPage({ navHidden }) {
 
       {/* Side Tabs */}
       <div className="side-tabs">
+        <div className="side-tab schema-tab">
+          <div className="tab-header">
+            <div className="tab-icon">
+              <div className="icon-circle">S</div>
+            </div>
+            <span className="tab-text">Schema</span>
+          </div>
+          <div className="tab-content">
+            <div className="schema-upload">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".sql"
+                onChange={handleSchemaUpload}
+                disabled={isUploadingSchema}
+                className="schema-file-input"
+                id="schema-file-input"
+              />
+              <label 
+                htmlFor="schema-file-input" 
+                className={`schema-upload-button ${isUploadingSchema ? 'uploading' : ''}`}
+              >
+                {isUploadingSchema ? 'Uploading...' : 'Upload SQL Schema'}
+              </label>
+              {schemaInfo && (
+                <div className="schema-info">
+                  <div className="schema-status">{schemaInfo.status}</div>
+                  <div className="schema-message">{schemaInfo.message}</div>
+                  <div className="schema-tables">
+                    <strong>Tables:</strong> {schemaInfo.tables.join(', ')}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="side-tab creativity-tab">
           <div className="tab-header">
             <div className="tab-icon">

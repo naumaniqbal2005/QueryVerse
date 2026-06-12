@@ -1,12 +1,16 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import os
 import requests
 import sqlite3
 import json
 import uvicorn
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Database Chat API", version="1.0.0")
 
@@ -33,11 +37,14 @@ name_matcher = SimpleNameMatcher()
 print("Simple name matcher ready!")
 
 
-DATABASE_SCHEMA = """Game Rental DB:Admins(AdminID PK:int,FullName:str,Email:str,AccessLevel:str);Categories(CategoryID PK:int,CategoryName:str);Games(GameID PK:int,GameTitle:str,Platform:str,Genre:str,TotalStock:int,CategoryID FK->Categories.CategoryID:int);GameCopies(CopyID PK:int,GameID FK->Games.GameID:int,CopyCondition:str,Availability:str);Users(UserID PK:int,FullName:str,Email:str,AccountStatus:str);Rentals(RentalID PK:int,UserID FK->Users.UserID:int,CopyID FK->GameCopies.CopyID:int,DateIssued:str,DateDue:str);Penalties(PenaltyID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,PenaltyAmount:decimal,PenaltyReason:str);Reviews(ReviewID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,Rating:int,ReviewText:str);Transactions(TransactionID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,AdminID FK->Admins.AdminID:int,Amount:decimal,TransactionDate:str);UnreleasedCatalog(UnreleasedID PK:int,GameTitle:str,ExpectedRelease:str);UserInterests(InterestID PK:int,UserID FK->Users.UserID:int,UnreleasedID FK->UnreleasedCatalog.UnreleasedID:int,RequestTime:str);Waitlist(WaitlistID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,RequestTime:str)"""
+# DATABASE_SCHEMA = """Game Rental DB:Admins(AdminID PK:int,FullName:str,Email:str,AccessLevel:str);Categories(CategoryID PK:int,CategoryName:str);Games(GameID PK:int,GameTitle:str,Platform:str,Genre:str,TotalStock:int,CategoryID FK->Categories.CategoryID:int);GameCopies(CopyID PK:int,GameID FK->Games.GameID:int,CopyCondition:str,Availability:str);Users(UserID PK:int,FullName:str,Email:str,AccountStatus:str);Rentals(RentalID PK:int,UserID FK->Users.UserID:int,CopyID FK->GameCopies.CopyID:int,DateIssued:str,DateDue:str);Penalties(PenaltyID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,PenaltyAmount:decimal,PenaltyReason:str);Reviews(ReviewID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,Rating:int,ReviewText:str);Transactions(TransactionID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,AdminID FK->Admins.AdminID:int,Amount:decimal,TransactionDate:str);UnreleasedCatalog(UnreleasedID PK:int,GameTitle:str,ExpectedRelease:str);UserInterests(InterestID PK:int,UserID FK->Users.UserID:int,UnreleasedID FK->UnreleasedCatalog.UnreleasedID:int,RequestTime:str);Waitlist(WaitlistID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,RequestTime:str)"""
 
-SQL_GENERATOR_PROMPT = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
+# SQL_GENERATOR_PROMPT = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
 
 RESPONSE_GENERATOR_PROMPT = """Convert SQL results to natural language. Be Friendly but to the point and definitive. For multiple results, list them clearly. Format responses to be user-friendly and easy to read. Ignore repeated values. Don't mention that you got the answer from an SQL query. Dont make a heading. A single sentence answer."""
+
+DATABASE_SCHEMA = ""
+DB_NAME = "mydb.db"
 
 # Pydantic models
 class ChatMessage(BaseModel):
@@ -58,11 +65,19 @@ class HealthResponse(BaseModel):
     status: str
     message: str
 
+class SchemaUploadResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    status: str
+    message: str
+    db_schema: str = Field(serialization_alias="schema")
+    tables: List[str]
+
 def execute_sql_query(sql_query):
     """Execute SQL query on the database and return results."""
     try:
         # Look for mydb.db in the current directory (backend folder)
-        db_path = "mydb.db"
+        db_path = DB_NAME
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute(sql_query)
@@ -74,6 +89,66 @@ def execute_sql_query(sql_query):
         return results, column_names, None
     except sqlite3.Error as e:
         return None, None, str(e)
+
+def parse_sql_schema(sql_content):
+    """Parse SQL schema to extract table names and columns."""
+    import re
+    
+    tables = {}
+    # Pattern to match CREATE TABLE statements
+    create_table_pattern = r'CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);'
+    
+    matches = re.findall(create_table_pattern, sql_content, re.IGNORECASE | re.DOTALL)
+    
+    for table_name, columns_block in matches:
+        columns = []
+        # Split by comma, but ignore commas inside parentheses
+        column_defs = re.split(r',(?![^(]*\))', columns_block)
+        
+        for col_def in column_defs:
+            col_def = col_def.strip()
+            if col_def:
+                # Extract column name (first word before space or parenthesis)
+                col_match = re.match(r'(\w+)', col_def)
+                if col_match:
+                    col_name = col_match.group(1)
+                    # Skip constraints like PRIMARY KEY, FOREIGN KEY, etc.
+                    if col_name.upper() not in ['PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'CONSTRAINT']:
+                        columns.append(col_name)
+        
+        tables[table_name] = columns
+    
+    return tables
+
+def convert_to_groq_schema(tables):
+    """Convert parsed tables to Groq schema format."""
+    schema_parts = []
+    for table_name, columns in tables.items():
+        col_str = ','.join(columns)
+        schema_parts.append(f"{table_name}({col_str})")
+    
+    return ';'.join(schema_parts)
+
+def remove_database_file(db_path):
+    """Remove an existing SQLite database and its sidecar files."""
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        path = f"{db_path}{suffix}" if suffix else db_path
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def create_database_from_schema(sql_content, db_path):
+    """Create SQLite database from SQL schema content."""
+    try:
+        remove_database_file(db_path)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.executescript(sql_content)
+        conn.commit()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 def query_groq(messages, temperature):
     """Query the GROQ API with proper error handling."""
@@ -125,11 +200,55 @@ async def root():
 async def health_check():
     return HealthResponse(status="healthy", message="API is ready to handle requests")
 
+@app.post("/upload-schema", response_model=SchemaUploadResponse)
+async def upload_schema(file: UploadFile = File(...)):
+    """Upload SQL schema file to create database and extract schema for Groq."""
+    global DATABASE_SCHEMA
+    
+    try:
+        # Read the uploaded file
+        content = await file.read()
+        sql_content = content.decode('utf-8')
+        
+        # Parse the SQL schema to extract tables and columns
+        tables = parse_sql_schema(sql_content)
+        
+        if not tables:
+            raise HTTPException(status_code=400, detail="No tables found in the SQL schema")
+        
+        # Convert to Groq schema format
+        groq_schema = convert_to_groq_schema(tables)
+        
+        # Update the global DATABASE_SCHEMA
+        DATABASE_SCHEMA = groq_schema
+        
+        # Create the database from the schema
+        success, error = create_database_from_schema(sql_content, DB_NAME)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to create database: {error}")
+        
+        return SchemaUploadResponse(
+            status="success",
+            message=f"Database created successfully with {len(tables)} tables",
+            db_schema=groq_schema,
+            tables=list(tables.keys())
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing schema: {str(e)}")
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Handle chat requests with database queries."""
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    # Check if schema has been uploaded
+    if not DATABASE_SCHEMA:
+        raise HTTPException(status_code=400, detail="No database schema loaded. Please upload a SQL schema file first using /upload-schema endpoint.")
     
     # Enhance query with simple name matching
     original_message = request.message
@@ -140,8 +259,9 @@ async def chat(request: ChatRequest):
 
     try:
         # Step 1: Generate SQL query
+        sql_generator_prompt = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
         sql_messages = [
-            {"role": "system", "content": SQL_GENERATOR_PROMPT},
+            {"role": "system", "content": sql_generator_prompt},
             {"role": "user", "content": enhanced_message}
         ]
         

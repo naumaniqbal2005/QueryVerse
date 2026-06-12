@@ -1467,7 +1467,78 @@ body::before {
 
 .cta-button:hover {
   transform: translateY(-2px);
-  box-shadow: 0 10px 30px rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.2);
+}
+
+/* Schema Upload Styles */
+.schema-file-input {
+  display: none;
+}
+
+.schema-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.schema-upload-button {
+  background: var(--text-color);
+  color: var(--background-color);
+  border: none;
+  border-radius: 12px;
+  padding: 12px 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  text-align: center;
+  display: block;
+  width: 100%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.schema-upload-button:hover:not(.uploading) {
+  background: var(--text-secondary);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.3);
+}
+
+.schema-upload-button.uploading {
+  opacity: 0.7;
+  cursor: not-allowed;
+  background: var(--border-color);
+}
+
+.schema-info {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 0.8rem;
+}
+
+.schema-status {
+  font-weight: 600;
+  color: var(--success-color);
+  margin-bottom: 4px;
+  text-transform: capitalize;
+}
+
+.schema-message {
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  font-size: 0.75rem;
+}
+
+.schema-tables {
+  color: var(--text-color);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.schema-tables strong {
+  color: var(--text-secondary);
 }
 
 .hero-visual {

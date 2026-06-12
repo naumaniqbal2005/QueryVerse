@@ -2,6 +2,8 @@
 frontend/images/
 images/
 pass.txt
+.env
+test.sql
 # Ignore dependencies
 node_modules/
 
