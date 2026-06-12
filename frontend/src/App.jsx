@@ -1,151 +1,352 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
+import './Auth.css';
+import { chatService, messageService, databaseService, chatDatabaseService, sessionService } from './supabaseService';
+import authService from './authService';
+import LoginPage from './LoginPage';
 
 // Home Page Component
 function HomePage({ navHidden }) {
+  const [scrollClass, setScrollClass] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const greekTitleRef = useRef(null);
+  const queryRef = useRef(null);
+  const verseRef = useRef(null);
+  const heroRef = useRef(null);
+  const previousScrollClass = useRef('');
+
+  // Helper functions to handle animation transitions properly
+  const setScrollState = (el, className) => {
+    // 1. Freeze the element at its current computed transform
+    const current = getComputedStyle(el).transform;
+    el.style.transform = current;        // inline style wins over animation
+    el.style.animation = 'none';         // kill the keyframe immediately
+
+    // 2. Force a reflow so the browser commits the frozen state
+    void el.offsetHeight;
+
+    // 3. Now swap to the scroll class — transition takes over cleanly
+    el.classList.remove('scrolling', 'fade-out');
+    el.classList.add(className);
+    el.style.transform = '';             // let CSS classes drive it again
+    el.style.animation = '';
+  };
+
+  const clearScrollState = (el) => {
+    // 1. Freeze at current position
+    const current = getComputedStyle(el).transform;
+    el.style.transform = current;
+    el.style.animation = 'none';
+    void el.offsetHeight;
+
+    // 2. Remove scroll classes — CSS transition takes it back to transform: none
+    el.classList.remove('scrolling', 'fade-out');
+    el.style.transform = '';   // let the base rule take over (no transform = identity)
+    el.style.animation = 'none'; // keep animation suppressed during transition back
+
+    // 3. After the transition finishes (0.6s), release animation suppression
+    clearTimeout(el._floatTimer);
+    el._floatTimer = setTimeout(() => {
+      el.style.animation = '';  // now gentleFloat resumes from a clean resting state
+    }, 650); // slightly longer than your 0.6s transition
+  };
+
+  // Main animation handler function
+  const handleHeroAnimation = (newScrollClass, previousScrollClass) => {
+    if (!heroRef.current) return;
+
+    const hero = heroRef.current;
+    
+    if (newScrollClass === 'scrolling') {
+      setScrollState(hero, 'scrolling');
+    } else if (newScrollClass === 'fade-out') {
+      setScrollState(hero, 'fade-out');
+    } else if (previousScrollClass === 'scrolling' || previousScrollClass === 'fade-out') {
+      // Scrolling up from scroll/fade-out state back to main
+      clearScrollState(hero);
+    }
+  };
+
+  // Measure query width for CSS positioning
+  useEffect(() => {
+    if (queryRef.current) {
+      const w = queryRef.current.offsetWidth;
+      document.documentElement.style.setProperty('--query-width', `${w + 20}px`);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Loading buffer for smooth initialization
+    const loadingTimer = setTimeout(() => {
+      setIsLoading(false);
+    }, 500); // Reduced from 1.5s to 0.5s
+
+    const handleScroll = () => {
+      if (isLoading) return; // Don't handle scroll during loading
+      
+      const scrollY = window.scrollY;
+      let newScrollClass = '';
+      
+      if (scrollY > 300) {
+        newScrollClass = 'fade-out';
+      } else if (scrollY > 50) {
+        newScrollClass = 'scrolling';
+      } else {
+        newScrollClass = '';
+      }
+      
+      // Only apply FLIP animation when class actually changes
+      if (newScrollClass !== previousScrollClass.current) {
+        // Handle hero animation transitions with the new handler
+        handleHeroAnimation(newScrollClass, previousScrollClass.current);
+        
+        previousScrollClass.current = newScrollClass;
+      }
+      
+      setScrollClass(newScrollClass);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      clearTimeout(loadingTimer);
+    };
+  }, [isLoading]);
+
   return (
-    <div className="home-page">
-      <div className="hero-section">
-        <div className="hero-content">
-          <h1 className="hero-title">Database Assistant</h1>
-          <p className="hero-subtitle">Natural Language Database Queries Powered by AI</p>
-          <p className="hero-description">
-            Transform your database interactions with intelligent natural language processing. 
-            Ask questions in plain English and get instant, accurate responses from your database.
-          </p>
-          <button className="cta-button" onClick={() => window.location.hash = '#chat'}>
-            Start Chatting →
-          </button>
+    <div className="brutalist-home">
+      {/* Header Navigation */}
+      <header className="brutalist-header">
+        <div className="nav-left">DATABASE ASSISTANT</div>
+        <div className="nav-center">
+          {/* Empty for now */}
         </div>
+        <div className="nav-right">
+          <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>HOME</span>
+          <span>ABOUT</span>
+          <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>CHAT</span>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="brutalist-main">
+        {/* Interactive Hero Image */}
         <div className="hero-visual">
-          <div className="demo-interface">
-            <div className="demo-header">
-              <div className="demo-dots">
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-              <div className="demo-title">Database Assistant</div>
+          <img 
+            ref={heroRef}
+            src="/images/phil.svg" 
+            alt="Database Visualization" 
+            className={`database-hero ${scrollClass} ${isLoading ? 'loading' : ''}`} 
+          />
+          
+          {/* Greek-style Overlays */}
+          <div className="greek-overlays">
+            <div ref={greekTitleRef} className={`greek-title ${scrollClass}`}>
+              <div ref={queryRef} className="greek-query">QUERY</div>
+              <div ref={verseRef} className="greek-verse">VERSE</div>
             </div>
-            <div className="demo-messages">
-              <div className="demo-message user">
-                <div className="demo-avatar">U</div>
-                <div className="demo-content">How many active users do we have?</div>
-              </div>
-              <div className="demo-message assistant">
-                <div className="demo-avatar">A</div>
-                <div className="demo-content">There are 7 active users in the database.</div>
-              </div>
-            </div>
-            <div className="demo-input">
-              <div className="demo-input-field">Ask anything about your database...</div>
-              <div className="demo-send-button">Send</div>
-            </div>
+            <div className={`greek-subtitle ${scrollClass}`}>Ἡ ΠΥΞΙΑ ΤΗΣ ΓΝΩΣΗΣΣΗΣ</div>
           </div>
         </div>
-      </div>
 
-      <div className="features-section">
-        <div className="container">
-          <h2 className="section-title">Powerful Features</h2>
-          <div className="features-grid">
+        {/* Extended Content Cards */}
+        <div className={`extended-content ${scrollClass}`}>
+          <div className="content-grid">
             <div className="feature-card">
-              <div className="feature-icon">🧠</div>
-              <h3>Natural Language Processing</h3>
-              <p>Ask questions in plain English. No SQL knowledge required.</p>
+              <h3>Natural Language Queries</h3>
+              <p>Ask questions in plain English, no SQL knowledge required</p>
             </div>
             <div className="feature-card">
-              <div className="feature-icon">⚡</div>
-              <h3>Lightning Fast</h3>
-              <p>Get instant responses with optimized token usage and efficient queries.</p>
+              <h3>Real-time Processing</h3>
+              <p>Get instant responses with optimized token usage</p>
             </div>
             <div className="feature-card">
-              <div className="feature-icon">🎯</div>
               <h3>Accurate Results</h3>
-              <p>Precise SQL generation and reliable data retrieval every time.</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">📊</div>
-              <h3>Token Tracking</h3>
-              <p>Monitor API usage with detailed token analytics and insights.</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🔒</div>
-              <h3>Secure & Private</h3>
-              <p>Your data stays secure with local database storage.</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🎨</div>
-              <h3>Modern Interface</h3>
-              <p>Clean, intuitive design inspired by the best AI assistants.</p>
+              <p>Precise SQL generation and reliable data retrieval</p>
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="tech-section">
-        <div className="container">
-          <h2 className="section-title">Technology Stack</h2>
-          <div className="tech-grid">
-            <div className="tech-item">
-              <div className="tech-logo">🐍</div>
-              <h4>FastAPI</h4>
-              <p>High-performance backend framework</p>
-            </div>
-            <div className="tech-item">
-              <div className="tech-logo">⚛️</div>
-              <h4>React</h4>
-              <p>Modern frontend library</p>
-            </div>
-            <div className="tech-item">
-              <div className="tech-logo">🤖</div>
-              <h4>GROQ AI</h4>
-              <p>Advanced language model</p>
-            </div>
-            <div className="tech-item">
-              <div className="tech-logo">🗄️</div>
-              <h4>SQLite</h4>
-              <p>Reliable database storage</p>
-            </div>
+        {/* Preview Card - Bottom Left */}
+        <div className="preview-card">
+          <div className="preview-overlay">QUERY INTERFACE</div>
+        </div>
+
+        {/* Sidebar - Right */}
+        <div className="right-sidebar">
+          <div className="sidebar-text">
+            <div className="sidebar-initial">D.</div>
+            <div className="sidebar-label">Database</div>
           </div>
         </div>
-      </div>
+
+        {/* Footer - Bottom Right */}
+        <div className="brutalist-footer">
+          <div className="scroll-text">KEEP SCROLLING</div>
+        </div>
+      </main>
     </div>
   );
 }
 
 // Chat Component
-function ChatPage({ navHidden }) {
+function ChatPage({ navHidden, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [temperature, setTemperature] = useState(0.7);
   const [isLoading, setIsLoading] = useState(false);
   const [tokensUsed, setTokensUsed] = useState(null);
+  const [schemaInfo, setSchemaInfo] = useState(null);
+  const [isUploadingSchema, setIsUploadingSchema] = useState(false);
+  const [currentChatId, setCurrentChatId] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [chatList, setChatList] = useState([]);
+  const [showChatList, setShowChatList] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  // Load chat state from localStorage on mount
+  // Initialize user ID from auth
   useEffect(() => {
-    const savedState = localStorage.getItem('chatState');
-    if (savedState) {
-      try {
-        const parsed = JSON.parse(savedState);
-        setMessages(parsed.messages || []);
-        setInput(parsed.input || '');
-        setTemperature(parsed.temperature || 0.7);
-        setTokensUsed(parsed.tokensUsed || null);
-      } catch (e) {
-        console.error('Failed to load chat state:', e);
-      }
+    const currentUser = authService.getCurrentUser();
+    if (currentUser) {
+      setUserId(currentUser.id);
+      loadUserChats(currentUser.id);
     }
   }, []);
 
-  // Save chat state to localStorage whenever it changes
+  // Load user's chats
+  const loadUserChats = async (uid) => {
+    try {
+      const chats = await chatService.listUserChats(uid);
+      setChatList(chats);
+    } catch (error) {
+      console.error('Failed to load chats:', error);
+    }
+  };
+
+  // Load chat state from localStorage on mount (fallback for non-Supabase)
   useEffect(() => {
-    const state = { messages, input, temperature, tokensUsed };
-    localStorage.setItem('chatState', JSON.stringify(state));
-  }, [messages, input, temperature, tokensUsed]);
+    if (!currentChatId) {
+      const savedState = localStorage.getItem('chatState');
+      if (savedState) {
+        try {
+          const parsed = JSON.parse(savedState);
+          setMessages(parsed.messages || []);
+          setInput(parsed.input || '');
+          setTemperature(parsed.temperature || 0.7);
+          setTokensUsed(parsed.tokensUsed || null);
+        } catch (e) {
+          console.error('Failed to load chat state:', e);
+        }
+      }
+    }
+  }, [currentChatId]);
+
+  // Save chat state to localStorage whenever it changes (fallback)
+  useEffect(() => {
+    if (!currentChatId) {
+      const state = { messages, input, temperature, tokensUsed };
+      localStorage.setItem('chatState', JSON.stringify(state));
+    }
+  }, [messages, input, temperature, tokensUsed, currentChatId]);
+
+  // Create new chat
+  const createNewChat = async () => {
+    try {
+      const newChat = await chatService.createChat({ title: 'New Chat' }, userId);
+      setCurrentChatId(newChat.id);
+      setMessages([]);
+      setTokensUsed(null);
+      loadUserChats(userId);
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+    }
+  };
+
+  // Load existing chat
+  const loadChat = async (chatId) => {
+    try {
+      setIsLoading(true);
+      const session = await sessionService.loadSession(chatId);
+      
+      // Parse messages from Supabase format
+      const parsedMessages = session.messages.map(msg => ({
+        role: msg.role === 'u' ? 'user' : 'assistant',
+        content: msg.content,
+        tokens_used: msg.tokens_used ? JSON.parse(msg.tokens_used) : null
+      }));
+      
+      setMessages(parsedMessages);
+      setCurrentChatId(chatId);
+      
+      // Load database files from storage and set up the database
+      if (session.databases && session.databases.length > 0) {
+        for (const dbInfo of session.databases) {
+          try {
+            // Download schema file from Supabase Storage
+            const dbData = await databaseService.downloadDatabase(dbInfo.id);
+            
+            // Create a Blob from the file data (SQL schema)
+            const blob = new Blob([dbData.fileData], { type: 'application/sql' });
+            const file = new File([blob], dbInfo.fileName, { type: 'application/sql' });
+            
+            // Upload to backend to set up the database
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const headers = authService.getAuthHeaders();
+            const uploadResponse = await axios.post('http://localhost:8000/upload-schema', formData, {
+              headers: {
+                'Content-Type': 'multipart/form-data',
+                ...headers
+              }
+            });
+            
+            setSchemaInfo({
+              status: uploadResponse.data.status,
+              message: uploadResponse.data.message,
+              schema: uploadResponse.data.db_schema,
+              tables: uploadResponse.data.tables
+            });
+            
+            console.log(`Database ${dbInfo.name} loaded successfully`);
+          } catch (dbError) {
+            console.error(`Failed to load database ${dbInfo.name}:`, dbError);
+          }
+        }
+      }
+      
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Failed to load chat:', error);
+      setIsLoading(false);
+    }
+  };
+
+  // Save current chat to Supabase
+  const saveCurrentChat = async () => {
+    if (!currentChatId || !userId) return;
+    
+    try {
+      // Convert messages to Supabase format
+      const supabaseMessages = messages.map(msg => ({
+        role: msg.role === 'user' ? 'u' : 'a',
+        content: msg.content,
+        tokens_used: msg.tokens_used
+      }));
+      
+      // Save messages
+      for (const msg of supabaseMessages) {
+        await messageService.createMessage(msg, currentChatId);
+      }
+      
+      console.log('Chat saved successfully');
+    } catch (error) {
+      console.error('Failed to save chat:', error);
+    }
+  };
 
   // Auto-resize textarea
   useEffect(() => {
@@ -175,19 +376,45 @@ function ChatPage({ navHidden }) {
     setTokensUsed(null);
 
     try {
+      const headers = authService.getAuthHeaders();
       const response = await axios.post('http://localhost:8000/chat', {
         message: input,
         chat_history: messages,
         temperature: temperature
-      });
+      }, { headers });
 
       const assistantMessage = { 
         role: 'assistant', 
-        content: response.data.response 
+        content: response.data.response,
+        tokens_used: response.data.tokens_used
       };
       
       setMessages([...newMessages, assistantMessage]);
       setTokensUsed(response.data.tokens_used);
+
+      // Auto-save to Supabase if chat exists
+      if (currentChatId) {
+        try {
+          await messageService.createMessage(
+            {
+              role: 'u',
+              content: input,
+              tokens_used: null
+            },
+            currentChatId
+          );
+          await messageService.createMessage(
+            {
+              role: 'a',
+              content: response.data.response,
+              tokens_used: response.data.tokens_used
+            },
+            currentChatId
+          );
+        } catch (saveError) {
+          console.error('Failed to save message to Supabase:', saveError);
+        }
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       const errorMessage = { 
@@ -210,6 +437,46 @@ function ChatPage({ navHidden }) {
   const clearChat = () => {
     setMessages([]);
     setTokensUsed(null);
+    if (!currentChatId) {
+      // Only clear localStorage if not using Supabase
+      localStorage.removeItem('chatState');
+    }
+  };
+
+  const handleSchemaUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setIsUploadingSchema(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const headers = authService.getAuthHeaders();
+      const response = await axios.post('http://localhost:8000/upload-schema', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          ...headers
+        }
+      });
+
+      setSchemaInfo({
+        status: response.data.status,
+        message: response.data.message,
+        schema: response.data.schema,
+        tables: response.data.tables
+      });
+
+      // Clear the file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (error) {
+      console.error('Error uploading schema:', error);
+      alert(`Error uploading schema: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setIsUploadingSchema(false);
+    }
   };
 
   const formatTokens = (tokens) => {
@@ -258,6 +525,51 @@ function ChatPage({ navHidden }) {
 
   return (
     <div className="app">
+      {/* Chat Management Header */}
+      <div className="chat-management-header">
+        <button onClick={() => setShowChatList(!showChatList)} className="chat-list-toggle">
+          {showChatList ? '▼' : '▶'} Chats
+        </button>
+        <button onClick={createNewChat} className="new-chat-button">
+          + New Chat
+        </button>
+        {currentChatId && (
+          <button onClick={saveCurrentChat} className="save-chat-button">
+            💾 Save
+          </button>
+        )}
+        <button onClick={onLogout} className="logout-button">
+          Logout
+        </button>
+      </div>
+
+      {/* Chat List Sidebar */}
+      {showChatList && (
+        <div className="chat-list-sidebar">
+          <div className="chat-list-header">
+            <h3>Your Chats</h3>
+          </div>
+          <div className="chat-list-items">
+            {chatList.length === 0 ? (
+              <div className="no-chats">No saved chats yet</div>
+            ) : (
+              chatList.map(chat => (
+                <div 
+                  key={chat.id} 
+                  className={`chat-list-item ${currentChatId === chat.id ? 'active' : ''}`}
+                  onClick={() => loadChat(chat.id)}
+                >
+                  <div className="chat-item-title">{chat.title}</div>
+                  <div className="chat-item-date">
+                    {new Date(chat.created_at).toLocaleDateString()}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       {messages.length === 0 ? (
         <div className="welcome-screen">
           <div className="welcome-text">
@@ -355,6 +667,43 @@ function ChatPage({ navHidden }) {
 
       {/* Side Tabs */}
       <div className="side-tabs">
+        <div className="side-tab schema-tab">
+          <div className="tab-header">
+            <div className="tab-icon">
+              <div className="icon-circle">S</div>
+            </div>
+            <span className="tab-text">Schema</span>
+          </div>
+          <div className="tab-content">
+            <div className="schema-upload">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".sql"
+                onChange={handleSchemaUpload}
+                disabled={isUploadingSchema}
+                className="schema-file-input"
+                id="schema-file-input"
+              />
+              <label 
+                htmlFor="schema-file-input" 
+                className={`schema-upload-button ${isUploadingSchema ? 'uploading' : ''}`}
+              >
+                {isUploadingSchema ? 'Uploading...' : 'Upload SQL Schema'}
+              </label>
+              {schemaInfo && (
+                <div className="schema-info">
+                  <div className="schema-status">{schemaInfo.status}</div>
+                  <div className="schema-message">{schemaInfo.message}</div>
+                  <div className="schema-tables">
+                    <strong>Tables:</strong> {schemaInfo.tables.join(', ')}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="side-tab creativity-tab">
           <div className="tab-header">
             <div className="tab-icon">
@@ -422,6 +771,8 @@ function App() {
     tokensUsed: null
   });
   const [navHidden, setNavHidden] = useState(false);
+  const [isInverted, setIsInverted] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(authService.isAuthenticated());
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -430,6 +781,22 @@ function App() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+
+  // Toggle theme inversion
+  const toggleTheme = () => {
+    setIsInverted(!isInverted);
+    document.body.classList.toggle('inverted');
+  };
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    authService.logout();
+    setIsAuthenticated(false);
+    setCurrentPage('#home');
+  };
 
   useEffect(() => {
     if (currentPage === '#home') {
@@ -504,10 +871,10 @@ function App() {
       starsContainer.style.width = '100%';
       starsContainer.style.height = '100%';
       starsContainer.style.pointerEvents = 'none';
-      starsContainer.style.zIndex = '0';
+      starsContainer.style.zIndex = '4';
       document.body.appendChild(starsContainer);
 
-      for (let i = 0; i < 25; i++) {
+      for (let i = 0; i < 40; i++) {
         const star = document.createElement('div');
         star.className = 'star';
         
@@ -537,25 +904,17 @@ function App() {
 
   return (
     <div className="app-wrapper">
-      <nav className={`navigation ${navHidden ? 'hidden' : ''}`}>
-        <div className="nav-links">
-          <a 
-            href="#home" 
-            className={`nav-link ${currentPage === '#home' ? 'active' : ''}`}
-          >
-            Home
-          </a>
-          <a 
-            href="#chat" 
-            className={`nav-link ${currentPage === '#chat' ? 'active' : ''}`}
-          >
-            Chat
-          </a>
-        </div>
-      </nav>
-
+      <button className="theme-toggle" onClick={toggleTheme}>
+        {isInverted ? '☀️' : '🌙'}
+      </button>
       {currentPage === '#home' && <HomePage navHidden={navHidden} />}
-      {currentPage === '#chat' && <ChatPage navHidden={navHidden} />}
+      {currentPage === '#chat' && (
+        isAuthenticated ? (
+          <ChatPage navHidden={navHidden} onLogout={handleLogout} />
+        ) : (
+          <LoginPage onLogin={handleLogin} />
+        )
+      )}
     </div>
   );
 }

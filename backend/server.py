@@ -1,12 +1,26 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import os
 import requests
 import sqlite3
 import json
 import uvicorn
+from dotenv import load_dotenv
+from supabase_routes import (
+    create_user, get_user,
+    create_chat, get_chat, list_user_chats, update_chat, delete_chat,
+    upload_database_file, get_database, list_user_databases, download_database_file, delete_database,
+    create_message, get_chat_messages, delete_message,
+    link_database_to_chat, unlink_database_from_chat, get_chat_databases,
+    load_session
+)
+from auth_routes import router as auth_router, get_current_user_dependency
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Database Chat API", version="1.0.0")
 
@@ -18,6 +32,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include auth router
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
+
+# Security scheme for JWT
+security = HTTPBearer()
 
 # Load GROQ API key from environment variable
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -33,11 +53,14 @@ name_matcher = SimpleNameMatcher()
 print("Simple name matcher ready!")
 
 
-DATABASE_SCHEMA = """Game Rental DB:Admins(AdminID PK:int,FullName:str,Email:str,AccessLevel:str);Categories(CategoryID PK:int,CategoryName:str);Games(GameID PK:int,GameTitle:str,Platform:str,Genre:str,TotalStock:int,CategoryID FK->Categories.CategoryID:int);GameCopies(CopyID PK:int,GameID FK->Games.GameID:int,CopyCondition:str,Availability:str);Users(UserID PK:int,FullName:str,Email:str,AccountStatus:str);Rentals(RentalID PK:int,UserID FK->Users.UserID:int,CopyID FK->GameCopies.CopyID:int,DateIssued:str,DateDue:str);Penalties(PenaltyID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,PenaltyAmount:decimal,PenaltyReason:str);Reviews(ReviewID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,Rating:int,ReviewText:str);Transactions(TransactionID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,AdminID FK->Admins.AdminID:int,Amount:decimal,TransactionDate:str);UnreleasedCatalog(UnreleasedID PK:int,GameTitle:str,ExpectedRelease:str);UserInterests(InterestID PK:int,UserID FK->Users.UserID:int,UnreleasedID FK->UnreleasedCatalog.UnreleasedID:int,RequestTime:str);Waitlist(WaitlistID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,RequestTime:str)"""
+# DATABASE_SCHEMA = """Game Rental DB:Admins(AdminID PK:int,FullName:str,Email:str,AccessLevel:str);Categories(CategoryID PK:int,CategoryName:str);Games(GameID PK:int,GameTitle:str,Platform:str,Genre:str,TotalStock:int,CategoryID FK->Categories.CategoryID:int);GameCopies(CopyID PK:int,GameID FK->Games.GameID:int,CopyCondition:str,Availability:str);Users(UserID PK:int,FullName:str,Email:str,AccountStatus:str);Rentals(RentalID PK:int,UserID FK->Users.UserID:int,CopyID FK->GameCopies.CopyID:int,DateIssued:str,DateDue:str);Penalties(PenaltyID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,PenaltyAmount:decimal,PenaltyReason:str);Reviews(ReviewID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,Rating:int,ReviewText:str);Transactions(TransactionID PK:int,UserID FK->Users.UserID:int,RentalID FK->Rentals.RentalID:int,AdminID FK->Admins.AdminID:int,Amount:decimal,TransactionDate:str);UnreleasedCatalog(UnreleasedID PK:int,GameTitle:str,ExpectedRelease:str);UserInterests(InterestID PK:int,UserID FK->Users.UserID:int,UnreleasedID FK->UnreleasedCatalog.UnreleasedID:int,RequestTime:str);Waitlist(WaitlistID PK:int,UserID FK->Users.UserID:int,GameID FK->Games.GameID:int,RequestTime:str)"""
 
-SQL_GENERATOR_PROMPT = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
+# SQL_GENERATOR_PROMPT = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
 
 RESPONSE_GENERATOR_PROMPT = """Convert SQL results to natural language. Be Friendly but to the point and definitive. For multiple results, list them clearly. Format responses to be user-friendly and easy to read. Ignore repeated values. Don't mention that you got the answer from an SQL query. Dont make a heading. A single sentence answer."""
+
+DATABASE_SCHEMA = ""
+DB_NAME = "mydb.db"
 
 # Pydantic models
 class ChatMessage(BaseModel):
@@ -58,11 +81,19 @@ class HealthResponse(BaseModel):
     status: str
     message: str
 
+class SchemaUploadResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    status: str
+    message: str
+    db_schema: str = Field(serialization_alias="schema")
+    tables: List[str]
+
 def execute_sql_query(sql_query):
     """Execute SQL query on the database and return results."""
     try:
         # Look for mydb.db in the current directory (backend folder)
-        db_path = "mydb.db"
+        db_path = DB_NAME
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute(sql_query)
@@ -74,6 +105,66 @@ def execute_sql_query(sql_query):
         return results, column_names, None
     except sqlite3.Error as e:
         return None, None, str(e)
+
+def parse_sql_schema(sql_content):
+    """Parse SQL schema to extract table names and columns."""
+    import re
+    
+    tables = {}
+    # Pattern to match CREATE TABLE statements
+    create_table_pattern = r'CREATE\s+TABLE\s+(\w+)\s*\((.*?)\);'
+    
+    matches = re.findall(create_table_pattern, sql_content, re.IGNORECASE | re.DOTALL)
+    
+    for table_name, columns_block in matches:
+        columns = []
+        # Split by comma, but ignore commas inside parentheses
+        column_defs = re.split(r',(?![^(]*\))', columns_block)
+        
+        for col_def in column_defs:
+            col_def = col_def.strip()
+            if col_def:
+                # Extract column name (first word before space or parenthesis)
+                col_match = re.match(r'(\w+)', col_def)
+                if col_match:
+                    col_name = col_match.group(1)
+                    # Skip constraints like PRIMARY KEY, FOREIGN KEY, etc.
+                    if col_name.upper() not in ['PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'CONSTRAINT']:
+                        columns.append(col_name)
+        
+        tables[table_name] = columns
+    
+    return tables
+
+def convert_to_groq_schema(tables):
+    """Convert parsed tables to Groq schema format."""
+    schema_parts = []
+    for table_name, columns in tables.items():
+        col_str = ','.join(columns)
+        schema_parts.append(f"{table_name}({col_str})")
+    
+    return ';'.join(schema_parts)
+
+def remove_database_file(db_path):
+    """Remove an existing SQLite database and its sidecar files."""
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        path = f"{db_path}{suffix}" if suffix else db_path
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def create_database_from_schema(sql_content, db_path):
+    """Create SQLite database from SQL schema content."""
+    try:
+        remove_database_file(db_path)
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.executescript(sql_content)
+        conn.commit()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 def query_groq(messages, temperature):
     """Query the GROQ API with proper error handling."""
@@ -125,11 +216,99 @@ async def root():
 async def health_check():
     return HealthResponse(status="healthy", message="API is ready to handle requests")
 
+@app.post("/upload-schema", response_model=SchemaUploadResponse)
+async def upload_schema(file: UploadFile = File(...), credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Upload SQL schema file to create database and extract schema for Groq."""
+    global DATABASE_SCHEMA
+    
+    # Verify JWT token
+    token = credentials.credentials
+    try:
+        from auth_utils import decode_access_token
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user_id = payload.get("sub")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Authentication failed")
+    
+    try:
+        # Read the uploaded file
+        content = await file.read()
+        sql_content = content.decode('utf-8')
+        
+        # Parse the SQL schema to extract tables and columns
+        tables = parse_sql_schema(sql_content)
+        
+        if not tables:
+            raise HTTPException(status_code=400, detail="No tables found in the SQL schema")
+        
+        # Convert to Groq schema format
+        groq_schema = convert_to_groq_schema(tables)
+        
+        # Update the global DATABASE_SCHEMA
+        DATABASE_SCHEMA = groq_schema
+        
+        # Create the database from the schema
+        success, error = create_database_from_schema(sql_content, DB_NAME)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to create database: {error}")
+        
+        # Store database in Supabase
+        try:
+            from supabase_routes import upload_database_file
+            import io
+            
+            # Create a file-like object from the SQL content
+            sql_file = io.BytesIO(sql_content.encode('utf-8'))
+            sql_file.name = file.filename or 'schema.sql'
+            
+            # Upload to Supabase
+            db_record = await upload_database_file(
+                file=sql_file,
+                user_id=user_id,
+                name=file.filename or 'uploaded_database'
+            )
+            print(f"Database stored successfully in Supabase: {db_record}")
+        except HTTPException as he:
+            print(f"Warning: Failed to store database in Supabase: {he.detail}")
+            # Continue even if Supabase storage fails
+        except Exception as e:
+            print(f"Warning: Failed to store database in Supabase: {str(e)}")
+            # Continue even if Supabase storage fails
+        
+        return SchemaUploadResponse(
+            status="success",
+            message=f"Database created successfully with {len(tables)} tables",
+            db_schema=groq_schema,
+            tables=list(tables.keys())
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing schema: {str(e)}")
+
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """Handle chat requests with database queries."""
+async def chat(request: ChatRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Handle chat requests with database queries - requires authentication"""
+    # Verify JWT token
+    token = credentials.credentials
+    try:
+        from auth_utils import decode_access_token
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Authentication failed")
+    
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
+    
+    # Check if schema has been uploaded
+    if not DATABASE_SCHEMA:
+        raise HTTPException(status_code=400, detail="No database schema loaded. Please upload a SQL schema file first using /upload-schema endpoint.")
     
     # Enhance query with simple name matching
     original_message = request.message
@@ -140,8 +319,9 @@ async def chat(request: ChatRequest):
 
     try:
         # Step 1: Generate SQL query
+        sql_generator_prompt = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
         sql_messages = [
-            {"role": "system", "content": SQL_GENERATOR_PROMPT},
+            {"role": "system", "content": sql_generator_prompt},
             {"role": "user", "content": enhanced_message}
         ]
         
@@ -223,6 +403,113 @@ async def chat(request: ChatRequest):
         chat_history=chat_history,
         tokens_used=tokens_used
     )
+
+# ============ Supabase CRUD Endpoints ============
+
+# User endpoints
+@app.post("/supabase/users")
+async def api_create_user(user: dict):
+    """Create a new user"""
+    return await create_user(user)
+
+@app.get("/supabase/users/{user_id}")
+async def api_get_user(user_id: str):
+    """Get user by ID"""
+    return await get_user(user_id)
+
+# Chat endpoints
+@app.post("/supabase/chats")
+async def api_create_chat(chat: dict, user_id: str):
+    """Create a new chat for a user"""
+    return await create_chat(chat, user_id)
+
+@app.get("/supabase/chats/{chat_id}")
+async def api_get_chat(chat_id: str):
+    """Get chat by ID"""
+    return await get_chat(chat_id)
+
+@app.get("/supabase/users/{user_id}/chats")
+async def api_list_user_chats(user_id: str):
+    """List all chats for a user"""
+    return await list_user_chats(user_id)
+
+@app.put("/supabase/chats/{chat_id}")
+async def api_update_chat(chat_id: str, title: str):
+    """Update chat title"""
+    return await update_chat(chat_id, title)
+
+@app.delete("/supabase/chats/{chat_id}")
+async def api_delete_chat(chat_id: str):
+    """Delete a chat"""
+    return await delete_chat(chat_id)
+
+# Database endpoints
+@app.post("/supabase/databases/upload")
+async def api_upload_database(
+    file: UploadFile = File(...),
+    user_id: str = None,
+    name: str = None
+):
+    """Upload database file to Supabase Storage"""
+    return await upload_database_file(file, user_id, name)
+
+@app.get("/supabase/databases/{database_id}")
+async def api_get_database(database_id: str):
+    """Get database by ID"""
+    return await get_database(database_id)
+
+@app.get("/supabase/users/{user_id}/databases")
+async def api_list_user_databases(user_id: str):
+    """List all databases for a user"""
+    return await list_user_databases(user_id)
+
+@app.get("/supabase/databases/{database_id}/download")
+async def api_download_database(database_id: str):
+    """Download database file from Supabase Storage"""
+    return await download_database_file(database_id)
+
+@app.delete("/supabase/databases/{database_id}")
+async def api_delete_database(database_id: str):
+    """Delete a database"""
+    return await delete_database(database_id)
+
+# Message endpoints
+@app.post("/supabase/messages")
+async def api_create_message(message: dict, chat_id: str):
+    """Create a new message in a chat"""
+    return await create_message(message, chat_id)
+
+@app.get("/supabase/chats/{chat_id}/messages")
+async def api_get_chat_messages(chat_id: str):
+    """Get all messages for a chat"""
+    return await get_chat_messages(chat_id)
+
+@app.delete("/supabase/messages/{message_id}")
+async def api_delete_message(message_id: str):
+    """Delete a message"""
+    return await delete_message(message_id)
+
+# Chat-Database relationship endpoints
+@app.post("/supabase/chats/{chat_id}/databases/{database_id}")
+async def api_link_database_to_chat(chat_id: str, database_id: str):
+    """Link a database to a chat"""
+    return await link_database_to_chat(chat_id, database_id)
+
+@app.delete("/supabase/chats/{chat_id}/databases/{database_id}")
+async def api_unlink_database_from_chat(chat_id: str, database_id: str):
+    """Unlink a database from a chat"""
+    return await unlink_database_from_chat(chat_id, database_id)
+
+@app.get("/supabase/chats/{chat_id}/databases")
+async def api_get_chat_databases(chat_id: str):
+    """Get all databases linked to a chat"""
+    return await get_chat_databases(chat_id)
+
+# Session loading endpoint
+@app.get("/supabase/sessions/{chat_id}")
+async def api_load_session(chat_id: str):
+    """Load a complete session (chat, messages, and databases)"""
+    return await load_session(chat_id)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

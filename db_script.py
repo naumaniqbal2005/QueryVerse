@@ -12,3 +12,5 @@ conn.commit()
 conn.close()
 
 print("SQLite DB created successfully!")
+
+#creating the database from the sqllite script
