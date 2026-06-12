@@ -285,20 +285,22 @@ function ChatPage({ navHidden, onLogout }) {
       if (session.databases && session.databases.length > 0) {
         for (const dbInfo of session.databases) {
           try {
-            // Download database file from Supabase Storage
+            // Download schema file from Supabase Storage
             const dbData = await databaseService.downloadDatabase(dbInfo.id);
             
-            // Create a Blob from the file data
-            const blob = new Blob([dbData.fileData], { type: 'application/x-sqlite3' });
-            const file = new File([blob], dbInfo.fileName, { type: 'application/x-sqlite3' });
+            // Create a Blob from the file data (SQL schema)
+            const blob = new Blob([dbData.fileData], { type: 'application/sql' });
+            const file = new File([blob], dbInfo.fileName, { type: 'application/sql' });
             
             // Upload to backend to set up the database
             const formData = new FormData();
             formData.append('file', file);
             
+            const headers = authService.getAuthHeaders();
             const uploadResponse = await axios.post('http://localhost:8000/upload-schema', formData, {
               headers: {
-                'Content-Type': 'multipart/form-data'
+                'Content-Type': 'multipart/form-data',
+                ...headers
               }
             });
             
@@ -450,9 +452,11 @@ function ChatPage({ navHidden, onLogout }) {
     formData.append('file', file);
 
     try {
+      const headers = authService.getAuthHeaders();
       const response = await axios.post('http://localhost:8000/upload-schema', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data'
+          'Content-Type': 'multipart/form-data',
+          ...headers
         }
       });
 

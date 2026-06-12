@@ -217,9 +217,20 @@ async def health_check():
     return HealthResponse(status="healthy", message="API is ready to handle requests")
 
 @app.post("/upload-schema", response_model=SchemaUploadResponse)
-async def upload_schema(file: UploadFile = File(...)):
+async def upload_schema(file: UploadFile = File(...), credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Upload SQL schema file to create database and extract schema for Groq."""
     global DATABASE_SCHEMA
+    
+    # Verify JWT token
+    token = credentials.credentials
+    try:
+        from auth_utils import decode_access_token
+        payload = decode_access_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        user_id = payload.get("sub")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Authentication failed")
     
     try:
         # Read the uploaded file
@@ -243,6 +254,29 @@ async def upload_schema(file: UploadFile = File(...)):
         
         if not success:
             raise HTTPException(status_code=500, detail=f"Failed to create database: {error}")
+        
+        # Store database in Supabase
+        try:
+            from supabase_routes import upload_database_file
+            import io
+            
+            # Create a file-like object from the SQL content
+            sql_file = io.BytesIO(sql_content.encode('utf-8'))
+            sql_file.name = file.filename or 'schema.sql'
+            
+            # Upload to Supabase
+            db_record = await upload_database_file(
+                file=sql_file,
+                user_id=user_id,
+                name=file.filename or 'uploaded_database'
+            )
+            print(f"Database stored successfully in Supabase: {db_record}")
+        except HTTPException as he:
+            print(f"Warning: Failed to store database in Supabase: {he.detail}")
+            # Continue even if Supabase storage fails
+        except Exception as e:
+            print(f"Warning: Failed to store database in Supabase: {str(e)}")
+            # Continue even if Supabase storage fails
         
         return SchemaUploadResponse(
             status="success",
