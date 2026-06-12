@@ -5,81 +5,98 @@ import './App.css';
 // Home Page Component
 function HomePage({ navHidden }) {
   const [scrollClass, setScrollClass] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
   const greekTitleRef = useRef(null);
   const queryRef = useRef(null);
   const verseRef = useRef(null);
+  const heroRef = useRef(null);
   const previousScrollClass = useRef('');
 
-  // FLIP technique for smooth morphing
-  const applyFlipAnimation = (isAddingFadeOut) => {
-    if (!queryRef.current || !verseRef.current) return;
+  // Helper functions to handle animation transitions properly
+  const setScrollState = (el, className) => {
+    // 1. Freeze the element at its current computed transform
+    const current = getComputedStyle(el).transform;
+    el.style.transform = current;        // inline style wins over animation
+    el.style.animation = 'none';         // kill the keyframe immediately
 
-    const words = [queryRef.current, verseRef.current];
+    // 2. Force a reflow so the browser commits the frozen state
+    void el.offsetHeight;
+
+    // 3. Now swap to the scroll class — transition takes over cleanly
+    el.classList.remove('scrolling', 'fade-out');
+    el.classList.add(className);
+    el.style.transform = '';             // let CSS classes drive it again
+    el.style.animation = '';
+  };
+
+  const clearScrollState = (el) => {
+    // 1. Freeze at current position
+    const current = getComputedStyle(el).transform;
+    el.style.transform = current;
+    el.style.animation = 'none';
+    void el.offsetHeight;
+
+    // 2. Remove scroll classes — CSS transition takes it back to transform: none
+    el.classList.remove('scrolling', 'fade-out');
+    el.style.transform = '';   // let the base rule take over (no transform = identity)
+    el.style.animation = 'none'; // keep animation suppressed during transition back
+
+    // 3. After the transition finishes (0.6s), release animation suppression
+    clearTimeout(el._floatTimer);
+    el._floatTimer = setTimeout(() => {
+      el.style.animation = '';  // now gentleFloat resumes from a clean resting state
+    }, 650); // slightly longer than your 0.6s transition
+  };
+
+  // Main animation handler function
+  const handleHeroAnimation = (newScrollClass, previousScrollClass) => {
+    if (!heroRef.current) return;
+
+    const hero = heroRef.current;
     
-    // First: Get initial positions
-    const first = words.map(el => el.getBoundingClientRect());
-    
-    // Last: Apply layout change and get new positions
-    if (isAddingFadeOut) {
-      // Temporarily apply the fade-out class to measure
-      const container = greekTitleRef.current;
-      container.classList.add('fade-out');
-      const last = words.map(el => el.getBoundingClientRect());
-      container.classList.remove('fade-out');
-      
-      // Invert: Apply transforms to keep elements in original positions
-      words.forEach((el, i) => {
-        const dx = first[i].left - last[i].left;
-        const dy = first[i].top - last[i].top;
-        el.style.transform = `translate(${dx}px, ${dy}px)`;
-      });
-      
-      // Play: Animate to new positions
-      requestAnimationFrame(() => {
-        words.forEach(el => {
-          el.style.transition = 'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
-          el.style.transform = '';
-        });
-      });
-    } else {
-      // Reverse animation
-      const container = greekTitleRef.current;
-      container.classList.add('fade-out');
-      const last = words.map(el => el.getBoundingClientRect());
-      container.classList.remove('fade-out');
-      
-      // Invert for reverse
-      words.forEach((el, i) => {
-        const dx = last[i].left - first[i].left;
-        const dy = last[i].top - first[i].top;
-        el.style.transform = `translate(${dx}px, ${dy}px)`;
-      });
-      
-      // Play reverse animation
-      requestAnimationFrame(() => {
-        words.forEach(el => {
-          el.style.transition = 'transform 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
-          el.style.transform = '';
-        });
-      });
+    if (newScrollClass === 'scrolling') {
+      setScrollState(hero, 'scrolling');
+    } else if (newScrollClass === 'fade-out') {
+      setScrollState(hero, 'fade-out');
+    } else if (previousScrollClass === 'scrolling' || previousScrollClass === 'fade-out') {
+      // Scrolling up from scroll/fade-out state back to main
+      clearScrollState(hero);
     }
   };
 
+  // Measure query width for CSS positioning
   useEffect(() => {
+    if (queryRef.current) {
+      const w = queryRef.current.offsetWidth;
+      document.documentElement.style.setProperty('--query-width', `${w + 20}px`);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Loading buffer for smooth initialization
+    const loadingTimer = setTimeout(() => {
+      setIsLoading(false);
+    }, 500); // Reduced from 1.5s to 0.5s
+
     const handleScroll = () => {
+      if (isLoading) return; // Don't handle scroll during loading
+      
       const scrollY = window.scrollY;
       let newScrollClass = '';
       
       if (scrollY > 300) {
         newScrollClass = 'fade-out';
-      } else if (scrollY < 250) {
+      } else if (scrollY > 50) {
+        newScrollClass = 'scrolling';
+      } else {
         newScrollClass = '';
       }
       
       // Only apply FLIP animation when class actually changes
       if (newScrollClass !== previousScrollClass.current) {
-        const isAddingFadeOut = newScrollClass === 'fade-out';
-        applyFlipAnimation(isAddingFadeOut);
+        // Handle hero animation transitions with the new handler
+        handleHeroAnimation(newScrollClass, previousScrollClass.current);
+        
         previousScrollClass.current = newScrollClass;
       }
       
@@ -87,19 +104,24 @@ function HomePage({ navHidden }) {
     };
 
     window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      clearTimeout(loadingTimer);
+    };
+  }, [isLoading]);
 
   return (
     <div className="brutalist-home">
       {/* Header Navigation */}
       <header className="brutalist-header">
         <div className="nav-left">DATABASE ASSISTANT</div>
+        <div className="nav-center">
+          {/* Empty for now */}
+        </div>
         <div className="nav-right">
           <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>HOME</span>
           <span>ABOUT</span>
           <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>CHAT</span>
-          <span className="nav-cta">SEND INQUIRY {'>'}</span>
         </div>
       </header>
 
@@ -108,9 +130,10 @@ function HomePage({ navHidden }) {
         {/* Interactive Hero Image */}
         <div className="hero-visual">
           <img 
-            src="/images/file.svg" 
+            ref={heroRef}
+            src="/images/phil.svg" 
             alt="Database Visualization" 
-            className={`database-hero ${scrollClass}`} 
+            className={`database-hero ${scrollClass} ${isLoading ? 'loading' : ''}`} 
           />
           
           {/* Greek-style Overlays */}
@@ -470,6 +493,7 @@ function App() {
     tokensUsed: null
   });
   const [navHidden, setNavHidden] = useState(false);
+  const [isInverted, setIsInverted] = useState(false);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -478,6 +502,12 @@ function App() {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+
+  // Toggle theme inversion
+  const toggleTheme = () => {
+    setIsInverted(!isInverted);
+    document.body.classList.toggle('inverted');
+  };
 
   useEffect(() => {
     if (currentPage === '#home') {
@@ -555,7 +585,7 @@ function App() {
       starsContainer.style.zIndex = '4';
       document.body.appendChild(starsContainer);
 
-      for (let i = 0; i < 35; i++) {
+      for (let i = 0; i < 40; i++) {
         const star = document.createElement('div');
         star.className = 'star';
         
@@ -585,6 +615,9 @@ function App() {
 
   return (
     <div className="app-wrapper">
+      <button className="theme-toggle" onClick={toggleTheme}>
+        {isInverted ? '☀️' : '🌙'}
+      </button>
       {currentPage === '#home' && <HomePage navHidden={navHidden} />}
       {currentPage === '#chat' && <ChatPage navHidden={navHidden} />}
     </div>

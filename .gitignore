@@ -1,7 +1,7 @@
 # Ignore images folder
 frontend/images/
 images/
-
+pass.txt
 # Ignore dependencies
 node_modules/
 
