@@ -195,14 +195,17 @@ function ChatPage({ navHidden, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [temperature, setTemperature] = useState(0.7);
+  const [mode, setMode] = useState('query');
   const [isLoading, setIsLoading] = useState(false);
   const [tokensUsed, setTokensUsed] = useState(null);
   const [schemaInfo, setSchemaInfo] = useState(null);
   const [isUploadingSchema, setIsUploadingSchema] = useState(false);
   const [currentChatId, setCurrentChatId] = useState(null);
+  const [currentDatabaseId, setCurrentDatabaseId] = useState(null);
   const [userId, setUserId] = useState(null);
   const [chatList, setChatList] = useState([]);
-  const [showChatList, setShowChatList] = useState(false);
+  const [isLoadingChat, setIsLoadingChat] = useState(false);
+  const [deletingChatId, setDeletingChatId] = useState(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -236,6 +239,7 @@ function ChatPage({ navHidden, onLogout }) {
           setMessages(parsed.messages || []);
           setInput(parsed.input || '');
           setTemperature(parsed.temperature || 0.7);
+          setMode(parsed.mode || 'query');
           setTokensUsed(parsed.tokensUsed || null);
         } catch (e) {
           console.error('Failed to load chat state:', e);
@@ -247,28 +251,71 @@ function ChatPage({ navHidden, onLogout }) {
   // Save chat state to localStorage whenever it changes (fallback)
   useEffect(() => {
     if (!currentChatId) {
-      const state = { messages, input, temperature, tokensUsed };
+      const state = { messages, input, temperature, mode, tokensUsed };
       localStorage.setItem('chatState', JSON.stringify(state));
     }
-  }, [messages, input, temperature, tokensUsed, currentChatId]);
+  }, [messages, input, temperature, mode, tokensUsed, currentChatId]);
 
   // Create new chat
   const createNewChat = async () => {
     try {
-      const newChat = await chatService.createChat({ title: 'New Chat' }, userId);
-      setCurrentChatId(newChat.id);
+      setCurrentChatId(null);
+      setCurrentDatabaseId(null);
       setMessages([]);
       setTokensUsed(null);
-      loadUserChats(userId);
+      setSchemaInfo(null);
+      setInput('');
+      localStorage.removeItem('chatState');
     } catch (error) {
-      console.error('Failed to create chat:', error);
+      console.error('Failed to start new chat:', error);
+    }
+  };
+
+  const deleteChat = async (e, chatId) => {
+    e.stopPropagation();
+    if (!userId || deletingChatId) return;
+
+    if (currentChatId === chatId && (isLoading || isLoadingChat)) {
+      alert('Please wait for the current operation to finish before deleting this chat.');
+      return;
+    }
+
+    const chat = chatList.find(c => c.id === chatId);
+    const title = chat?.title || 'this chat';
+    if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
+
+    setDeletingChatId(chatId);
+    try {
+      await chatService.deleteChat(chatId, userId);
+      setChatList(prev => prev.filter(c => c.id !== chatId));
+
+      if (currentChatId === chatId) {
+        setCurrentChatId(null);
+        setCurrentDatabaseId(null);
+        setMessages([]);
+        setTokensUsed(null);
+        setSchemaInfo(null);
+        setInput('');
+        setIsLoading(false);
+        localStorage.removeItem('chatState');
+      }
+    } catch (error) {
+      console.error('Failed to delete chat:', error);
+      alert(`Failed to delete chat: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setDeletingChatId(null);
     }
   };
 
   // Load existing chat
   const loadChat = async (chatId) => {
     try {
-      setIsLoading(true);
+      setIsLoadingChat(true);
+      
+      // Clear previous database state
+      setCurrentDatabaseId(null);
+      setSchemaInfo(null);
+      
       const session = await sessionService.loadSession(chatId);
       
       // Parse messages from Supabase format
@@ -283,13 +330,18 @@ function ChatPage({ navHidden, onLogout }) {
       
       // Load database files from storage and set up the database
       if (session.databases && session.databases.length > 0) {
+        let databaseLoaded = false;
+        
         for (const dbInfo of session.databases) {
           try {
-            // Download schema file from Supabase Storage
-            const dbData = await databaseService.downloadDatabase(dbInfo.id);
+            // Skip if fileData is null (download failed on backend)
+            if (!dbInfo.fileData) {
+              console.warn(`Database ${dbInfo.database.name} could not be downloaded: ${dbInfo.error || 'Unknown error'}`);
+              continue;
+            }
             
             // Create a Blob from the file data (SQL schema)
-            const blob = new Blob([dbData.fileData], { type: 'application/sql' });
+            const blob = new Blob([dbInfo.fileData], { type: 'application/sql' });
             const file = new File([blob], dbInfo.fileName, { type: 'application/sql' });
             
             // Upload to backend to set up the database
@@ -311,40 +363,43 @@ function ChatPage({ navHidden, onLogout }) {
               tables: uploadResponse.data.tables
             });
             
-            console.log(`Database ${dbInfo.name} loaded successfully`);
+            setCurrentDatabaseId(dbInfo.database.id);
+            databaseLoaded = true;
+            console.log(`Database ${dbInfo.database.name} loaded successfully`);
+            
+            // Only load the first successfully downloaded database
+            break;
           } catch (dbError) {
-            console.error(`Failed to load database ${dbInfo.name}:`, dbError);
+            console.error(`Failed to load database ${dbInfo.database.name}:`, dbError);
           }
         }
+        
+        if (!databaseLoaded) {
+          console.warn('No database could be loaded for this chat');
+          setSchemaInfo({
+            status: 'warning',
+            message: 'No database available for this chat. Please upload a database schema.',
+            schema: null,
+            tables: []
+          });
+        }
+      } else {
+        console.log('No databases linked to this chat');
+        setSchemaInfo({
+          status: 'info',
+          message: 'No database linked to this chat. Please upload a database schema.',
+          schema: null,
+          tables: []
+        });
       }
       
-      setIsLoading(false);
+      // Refresh chat list to update active state
+      await loadUserChats(userId);
+      
+      setIsLoadingChat(false);
     } catch (error) {
       console.error('Failed to load chat:', error);
-      setIsLoading(false);
-    }
-  };
-
-  // Save current chat to Supabase
-  const saveCurrentChat = async () => {
-    if (!currentChatId || !userId) return;
-    
-    try {
-      // Convert messages to Supabase format
-      const supabaseMessages = messages.map(msg => ({
-        role: msg.role === 'user' ? 'u' : 'a',
-        content: msg.content,
-        tokens_used: msg.tokens_used
-      }));
-      
-      // Save messages
-      for (const msg of supabaseMessages) {
-        await messageService.createMessage(msg, currentChatId);
-      }
-      
-      console.log('Chat saved successfully');
-    } catch (error) {
-      console.error('Failed to save chat:', error);
+      setIsLoadingChat(false);
     }
   };
 
@@ -368,6 +423,19 @@ function ChatPage({ navHidden, onLogout }) {
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
+    // Create a chat if one doesn't exist
+    let chatId = currentChatId;
+    if (!chatId && userId) {
+      try {
+        const newChat = await chatService.createChat({ title: 'New Chat' }, userId);
+        chatId = newChat.id;
+        setCurrentChatId(chatId);
+        await loadUserChats(userId);
+      } catch (createError) {
+        console.error('Failed to create chat:', createError);
+      }
+    }
+
     const userMessage = { role: 'user', content: input };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
@@ -380,7 +448,8 @@ function ChatPage({ navHidden, onLogout }) {
       const response = await axios.post('http://localhost:8000/chat', {
         message: input,
         chat_history: messages,
-        temperature: temperature
+        temperature: temperature,
+        mode: mode
       }, { headers });
 
       const assistantMessage = { 
@@ -393,23 +462,26 @@ function ChatPage({ navHidden, onLogout }) {
       setTokensUsed(response.data.tokens_used);
 
       // Auto-save to Supabase if chat exists
-      if (currentChatId) {
+      if (chatId) {
         try {
-          await messageService.createMessage(
+          const savedUserMessage = await messageService.createMessage(
             {
               role: 'u',
               content: input,
               tokens_used: null
             },
-            currentChatId
+            chatId
           );
+          if (savedUserMessage.chat_title && userId) {
+            await loadUserChats(userId);
+          }
           await messageService.createMessage(
             {
               role: 'a',
               content: response.data.response,
               tokens_used: response.data.tokens_used
             },
-            currentChatId
+            chatId
           );
         } catch (saveError) {
           console.error('Failed to save message to Supabase:', saveError);
@@ -437,8 +509,8 @@ function ChatPage({ navHidden, onLogout }) {
   const clearChat = () => {
     setMessages([]);
     setTokensUsed(null);
+    setInput('');
     if (!currentChatId) {
-      // Only clear localStorage if not using Supabase
       localStorage.removeItem('chatState');
     }
   };
@@ -463,9 +535,37 @@ function ChatPage({ navHidden, onLogout }) {
       setSchemaInfo({
         status: response.data.status,
         message: response.data.message,
-        schema: response.data.schema,
+        schema: response.data.db_schema,
         tables: response.data.tables
       });
+
+      // If database was stored in Supabase
+      if (response.data.database_id) {
+        setCurrentDatabaseId(response.data.database_id);
+        
+        // Create a chat if one doesn't exist, then link the database
+        let chatId = currentChatId;
+        if (!chatId && userId) {
+          try {
+            const newChat = await chatService.createChat({ title: 'New Chat' }, userId);
+            chatId = newChat.id;
+            setCurrentChatId(chatId);
+            await loadUserChats(userId);
+          } catch (createError) {
+            console.error('Failed to create chat:', createError);
+          }
+        }
+        
+        // Link database to chat if we have a chat
+        if (chatId) {
+          try {
+            await chatDatabaseService.linkDatabaseToChat(chatId, response.data.database_id);
+            console.log('Database linked to chat successfully');
+          } catch (linkError) {
+            console.error('Failed to link database to chat:', linkError);
+          }
+        }
+      }
 
       // Clear the file input
       if (fileInputRef.current) {
@@ -524,238 +624,255 @@ function ChatPage({ navHidden, onLogout }) {
   };
 
   return (
-    <div className="app">
-      {/* Chat Management Header */}
-      <div className="chat-management-header">
-        <button onClick={() => setShowChatList(!showChatList)} className="chat-list-toggle">
-          {showChatList ? '▼' : '▶'} Chats
-        </button>
-        <button onClick={createNewChat} className="new-chat-button">
-          + New Chat
-        </button>
-        {currentChatId && (
-          <button onClick={saveCurrentChat} className="save-chat-button">
-            💾 Save
+    <div className="chat-layout">
+      <aside className="chat-sidebar">
+        <div className="sidebar-top">
+          <div className="sidebar-brand">QueryVerse</div>
+          <button onClick={createNewChat} className="new-chat-button sidebar-new-chat">
+            + New Chat
           </button>
-        )}
-        <button onClick={onLogout} className="logout-button">
-          Logout
-        </button>
-      </div>
+        </div>
 
-      {/* Chat List Sidebar */}
-      {showChatList && (
-        <div className="chat-list-sidebar">
-          <div className="chat-list-header">
-            <h3>Your Chats</h3>
-          </div>
-          <div className="chat-list-items">
-            {chatList.length === 0 ? (
-              <div className="no-chats">No saved chats yet</div>
-            ) : (
-              chatList.map(chat => (
-                <div 
-                  key={chat.id} 
-                  className={`chat-list-item ${currentChatId === chat.id ? 'active' : ''}`}
-                  onClick={() => loadChat(chat.id)}
-                >
+        <div className="sidebar-chats">
+          {chatList.length === 0 ? (
+            <div className="no-chats">No chats yet</div>
+          ) : (
+            chatList.map(chat => (
+              <div
+                key={chat.id}
+                className={`chat-list-item ${currentChatId === chat.id ? 'active' : ''} ${deletingChatId === chat.id ? 'deleting' : ''}`}
+                onClick={() => !deletingChatId && loadChat(chat.id)}
+              >
+                <div className="chat-item-content">
                   <div className="chat-item-title">{chat.title}</div>
                   <div className="chat-item-date">
                     {new Date(chat.created_at).toLocaleDateString()}
                   </div>
                 </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {messages.length === 0 ? (
-        <div className="welcome-screen">
-          <div className="welcome-text">
-            <h1>Say it, I'll fetch it</h1>
-            <p>Ask me anything about your game rental database</p>
-          </div>
-          <div className="centered-input">
-            <div className="input-row">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="What to bring you, my lord?"
-                className="message-input centered"
-                disabled={isLoading}
-                rows={1}
-              />
-              <button 
-                onClick={sendMessage} 
-                disabled={isLoading || !input.trim()}
-                className="send-button"
-              >
-                {isLoading ? 'Sending...' : 'Send'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="chat-container">
-          <div className="messages">
-            {messages.map((message, index) => (
-              <div key={index} className={`message ${message.role}`}>
-                <div className="message-avatar">
-                  {message.role === 'user' ? 'U' : 'A'}
-                </div>
-                <div className="message-content">
-                  {message.role === 'assistant' ? (
-                    cleanResponse(message.content).split('\n').map((line, lineIndex) => (
-                      <div key={lineIndex}>
-                        {line || <br />}
-                      </div>
-                    ))
-                  ) : (
-                    message.content.split('\n').map((line, lineIndex) => (
-                      <div key={lineIndex}>
-                        {line || <br />}
-                      </div>
-                    ))
-                  )}
-                </div>
+                <button
+                  type="button"
+                  className="chat-delete-button"
+                  onClick={(e) => deleteChat(e, chat.id)}
+                  disabled={deletingChatId === chat.id}
+                  title="Delete chat"
+                  aria-label={`Delete ${chat.title}`}
+                >
+                  {deletingChatId === chat.id ? '…' : '×'}
+                </button>
               </div>
-            ))}
-            {isLoading && (
-              <div className="message assistant">
-                <div className="message-avatar">A</div>
-                <div className="message-content loading">
-                  <div className="typing-indicator">
-                    <span></span>
-                    <span></span>
-                    <span></span>
-                  </div>
-                  <span className="loading-text">Thinking...</span>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
+            ))
+          )}
         </div>
-      )}
 
-      {messages.length > 0 && (
-        <div className="input-container">
-          <div className="input-row">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="What to bring you, my lord?"
-              className="message-input"
-              disabled={isLoading}
-              rows={1}
-            />
-            <button 
-              onClick={sendMessage} 
-              disabled={isLoading || !input.trim()}
-              className="send-button"
-            >
-              {isLoading ? 'Sending...' : 'Send'}
+        <div className="sidebar-footer">
+          <div className="sidebar-actions">
+            <button onClick={clearChat} className="clear-button sidebar-clear-button">
+              Clear Messages
+            </button>
+            <button onClick={onLogout} className="logout-button sidebar-logout-button">
+              Logout
             </button>
           </div>
-        </div>
-      )}
 
-      {/* Side Tabs */}
-      <div className="side-tabs">
-        <div className="side-tab schema-tab">
-          <div className="tab-header">
-            <div className="tab-icon">
-              <div className="icon-circle">S</div>
+          {tokensUsed && (
+            <div className="sidebar-section sidebar-tokens">
+              {formatTokens(tokensUsed)}
             </div>
-            <span className="tab-text">Schema</span>
+          )}
+        </div>
+      </aside>
+
+      <main className="chat-main">
+        {isLoadingChat ? (
+          <div className="loading-screen">
+            <div className="loading-content">
+              <div className="loading-spinner"></div>
+              <h2>Loading Chat...</h2>
+              <p>Please wait while we load your previous conversation</p>
+            </div>
           </div>
-          <div className="tab-content">
-            <div className="schema-upload">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".sql"
-                onChange={handleSchemaUpload}
-                disabled={isUploadingSchema}
-                className="schema-file-input"
-                id="schema-file-input"
-              />
-              <label 
-                htmlFor="schema-file-input" 
-                className={`schema-upload-button ${isUploadingSchema ? 'uploading' : ''}`}
-              >
-                {isUploadingSchema ? 'Uploading...' : 'Upload SQL Schema'}
-              </label>
-              {schemaInfo && (
-                <div className="schema-info">
-                  <div className="schema-status">{schemaInfo.status}</div>
-                  <div className="schema-message">{schemaInfo.message}</div>
+        ) : messages.length === 0 ? (
+          <div className="welcome-screen">
+            <div className="welcome-text">
+              <h1>Say it, I'll fetch it</h1>
+              <p>Ask me anything about your game rental database</p>
+            </div>
+            <div className="centered-input">
+              <div className="mode-selector">
+                <button
+                  type="button"
+                  className={`mode-option ${mode === 'query' ? 'active' : ''}`}
+                  onClick={() => setMode('query')}
+                  disabled={isLoading}
+                >
+                  Query
+                </button>
+                <button
+                  type="button"
+                  className={`mode-option ${mode === 'general' ? 'active' : ''}`}
+                  onClick={() => setMode('general')}
+                  disabled={isLoading}
+                >
+                  General
+                </button>
+              </div>
+              <div className="input-row">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder="What to bring you, my lord?"
+                  className="message-input centered"
+                  disabled={isLoading}
+                  rows={1}
+                />
+                <button
+                  onClick={sendMessage}
+                  disabled={isLoading || !input.trim()}
+                  className="send-button"
+                >
+                  {isLoading ? 'Sending...' : 'Send'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="chat-container">
+              <div className="messages">
+                {messages.map((message, index) => (
+                  <div key={index} className={`message ${message.role}`}>
+                    <div className="message-avatar">
+                      {message.role === 'user' ? 'U' : 'A'}
+                    </div>
+                    <div className="message-content">
+                      {message.role === 'assistant' ? (
+                        cleanResponse(message.content).split('\n').map((line, lineIndex) => (
+                          <div key={lineIndex}>
+                            {line || <br />}
+                          </div>
+                        ))
+                      ) : (
+                        message.content.split('\n').map((line, lineIndex) => (
+                          <div key={lineIndex}>
+                            {line || <br />}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {isLoading && (
+                  <div className="message assistant">
+                    <div className="message-avatar">A</div>
+                    <div className="message-content loading">
+                      <div className="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                      </div>
+                      <span className="loading-text">Thinking...</span>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            </div>
+
+            <div className="input-container">
+              <div className="mode-selector">
+                <button
+                  type="button"
+                  className={`mode-option ${mode === 'query' ? 'active' : ''}`}
+                  onClick={() => setMode('query')}
+                  disabled={isLoading}
+                >
+                  Query
+                </button>
+                <button
+                  type="button"
+                  className={`mode-option ${mode === 'general' ? 'active' : ''}`}
+                  onClick={() => setMode('general')}
+                  disabled={isLoading}
+                >
+                  General
+                </button>
+              </div>
+              <div className="input-row">
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder="What to bring you, my lord?"
+                  className="message-input"
+                  disabled={isLoading}
+                  rows={1}
+                />
+                <button
+                  onClick={sendMessage}
+                  disabled={isLoading || !input.trim()}
+                  className="send-button"
+                >
+                  {isLoading ? 'Sending...' : 'Send'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+
+      <aside className="chat-controls-right">
+        <div className="right-card schema-card">
+          <div className="right-card-label">Schema</div>
+          <div className="schema-upload right-schema">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".sql"
+              onChange={handleSchemaUpload}
+              disabled={isUploadingSchema}
+              className="schema-file-input"
+              id="schema-file-input"
+            />
+            <label
+              htmlFor="schema-file-input"
+              className={`schema-upload-button ${isUploadingSchema ? 'uploading' : ''}`}
+            >
+              {isUploadingSchema ? 'Uploading...' : 'Upload SQL Schema'}
+            </label>
+            {schemaInfo && (
+              <div className="schema-info right-schema-info">
+                <div className="schema-status">{schemaInfo.status}</div>
+                <div className="schema-message">{schemaInfo.message}</div>
+                {schemaInfo.tables?.length > 0 && (
                   <div className="schema-tables">
                     <strong>Tables:</strong> {schemaInfo.tables.join(', ')}
                   </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="side-tab creativity-tab">
-          <div className="tab-header">
-            <div className="tab-icon">
-              <div className="icon-circle">C</div>
-            </div>
-            <span className="tab-text">Creativity</span>
-          </div>
-          <div className="tab-content">
-            <div className="temperature-control">
-              <label htmlFor="temperature">Response Creativity: {temperature.toFixed(1)}</label>
-              <input
-                id="temperature"
-                type="range"
-                min="0.2"
-                max="1.0"
-                step="0.1"
-                value={temperature}
-                onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                className="temperature-slider"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="side-tab clear-tab">
-          <div className="tab-header">
-            <div className="tab-icon">
-              <div className="icon-circle">X</div>
-            </div>
-            <span className="tab-text">Clear</span>
-          </div>
-          <div className="tab-content">
-            <button onClick={clearChat} className="clear-button">
-              Clear Chat
-            </button>
-          </div>
-        </div>
-
-        {tokensUsed && (
-          <div className="side-tab tokens-tab">
-            <div className="tab-header">
-              <div className="tab-icon">
-                <div className="icon-circle">T</div>
+                )}
               </div>
-              <span className="tab-text">Tokens</span>
-            </div>
-            <div className="tab-content">
-              {formatTokens(tokensUsed)}
-            </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+
+        <div className="right-card creativity-card">
+          <div className="right-card-label">Creativity</div>
+          <div className="temperature-control right-temperature">
+            <label htmlFor="temperature-right">{temperature.toFixed(1)}</label>
+            <input
+              id="temperature-right"
+              type="range"
+              min="0.2"
+              max="1.0"
+              step="0.1"
+              value={temperature}
+              onChange={(e) => setTemperature(parseFloat(e.target.value))}
+              className="temperature-slider"
+            />
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }

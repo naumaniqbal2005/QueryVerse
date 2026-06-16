@@ -12,6 +12,7 @@ import json
 import os
 import requests
 from dotenv import load_dotenv
+from supabase_config import get_supabase_admin_client
 
 load_dotenv()
 
@@ -89,6 +90,31 @@ def supabase_request(method: str, table: str, data: dict = None, filters: dict =
         raise ValueError(f"Unsupported method: {method}")
     
     return response
+
+
+def _title_from_message(content: str, max_len: int = 50) -> str:
+    text = content.strip()
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "..."
+
+
+def _update_chat_title_if_first_user_message(chat_id: str, content: str) -> Optional[str]:
+    """Set chat title from the first user message using the Supabase Python SDK."""
+    client = get_supabase_admin_client()
+    count_response = (
+        client.table("messages")
+        .select("id", count="exact")
+        .eq("chat_id", chat_id)
+        .eq("role", "u")
+        .execute()
+    )
+    if count_response.count != 1:
+        return None
+
+    title = _title_from_message(content)
+    client.table("chats").update({"title": title}).eq("id", chat_id).execute()
+    return title
 
 
 class MessageCreate(BaseModel):
@@ -174,6 +200,42 @@ async def create_chat(chat: ChatCreate, user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating chat: {str(e)}")
 
+async def set_chat_title(chat_id: str, title: str):
+    """Set chat title"""
+    try:
+        client = get_supabase_admin_client()
+        response = client.table("chats").update({"title": title}).eq("id", chat_id).execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        return response.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error setting chat title: {str(e)}")
+
+
+async def get_first_user_message(chat_id: str):
+    """Get first user message for a chat"""
+    try:
+        client = get_supabase_admin_client()
+        response = (
+            client.table("messages")
+            .select("*")
+            .eq("chat_id", chat_id)
+            .eq("role", "u")
+            .order("created_at")
+            .limit(1)
+            .execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="No user messages found")
+        return response.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting first user message: {str(e)}")
+
+
 async def get_chat(chat_id: str):
     """Get chat by ID"""
     try:
@@ -208,30 +270,30 @@ async def list_user_chats(user_id: str):
 
 async def update_chat(chat_id: str, title: str):
     """Update chat title"""
-    try:
-        response = supabase_request("PUT", "chats", data={'title': title}, filters={"id": chat_id})
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Error updating chat")
-        
-        chats = response.json()
-        if not chats:
-            raise HTTPException(status_code=404, detail="Chat not found")
-        return chats[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error updating chat: {str(e)}")
+    return await set_chat_title(chat_id, title)
 
-async def delete_chat(chat_id: str):
-    """Delete a chat (cascade deletes messages and chat_databases)"""
+async def delete_chat(chat_id: str, user_id: Optional[str] = None):
+    """Delete a chat and all linked records (messages, chat_databases)."""
     try:
-        response = supabase_request("DELETE", "chats", filters={"id": chat_id})
-        if response.status_code != 200 and response.status_code != 204:
-            raise HTTPException(status_code=500, detail="Error deleting chat")
-        return {"message": "Chat deleted successfully"}
+        client = get_supabase_admin_client()
+
+        chat_response = client.table("chats").select("*").eq("id", chat_id).execute()
+        if not chat_response.data:
+            raise HTTPException(status_code=404, detail="Chat not found")
+
+        chat = chat_response.data[0]
+        if user_id and chat.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Not authorized to delete this chat")
+
+        client.table("messages").delete().eq("chat_id", chat_id).execute()
+        client.table("chat_databases").delete().eq("chat_id", chat_id).execute()
+        client.table("chats").delete().eq("id", chat_id).execute()
+
+        return {"message": "Chat deleted successfully", "id": chat_id}
     except HTTPException:
         raise
     except Exception as e:
+        print(f"DELETE CHAT ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=f"Error deleting chat: {str(e)}")
 
 # Database endpoints
@@ -242,6 +304,12 @@ async def upload_database_file(
 ):
     """Upload database file to Supabase Storage and create database record"""
     try:
+        #check if the database has already been uploaded
+        response = supabase_request("GET", "databases", filters={"user_id": user_id, "name": file.name})
+        if response.status_code == 200 and response.json():
+            print(f"Database with this name already exists: {file.name}")
+            return response.json()[0]
+
         # Read file content
         if hasattr(file, 'read'):
             content = file.read()
@@ -249,8 +317,8 @@ async def upload_database_file(
             content = await file.read()
         file_size = len(content)
         
-        # Get filename from file object or use default
-        filename = getattr(file, 'filename', name or 'schema.sql')
+        # Get filename from file object
+        filename = file.name if hasattr(file, 'name') else name or 'database.sql'
         
         # Generate unique filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -389,7 +457,12 @@ async def create_message(message: MessageCreate, chat_id: str):
         if response.status_code not in [200, 201]:
             raise HTTPException(status_code=500, detail=f"Error creating message: {response.text}")
         
-        return response.json()[0]
+        created = response.json()[0]
+        if message.role == "u":
+            chat_title = _update_chat_title_if_first_user_message(chat_id, message.content)
+            if chat_title:
+                created["chat_title"] = chat_title
+        return created
     except HTTPException:
         raise
     except Exception as e:
@@ -425,20 +498,53 @@ async def delete_message(message_id: str):
 
 # Chat-Database relationship endpoints
 async def link_database_to_chat(chat_id: str, database_id: str):
-    """Link a database to a chat"""
+    """Link a database to a chat (updates existing if chat already has a database)"""
     try:
-        response = supabase_request("POST", "chat_databases", data={
-            'chat_id': chat_id,
-            'database_id': database_id
-        })
+        print(f"link_database_to_chat called with chat_id={chat_id}, database_id={database_id}")
         
-        if response.status_code not in [200, 201]:
-            raise HTTPException(status_code=500, detail=f"Error linking database to chat: {response.text}")
+        # Check if chat already has a database linked
+        existing_response = supabase_request("GET", "chat_databases", filters={"chat_id": chat_id})
+        print(f"Existing check response status: {existing_response.status_code}")
+        print(f"Existing check response: {existing_response.text}")
         
-        return response.json()[0]
+        if existing_response.status_code == 200 and existing_response.json():
+            # Chat already has a database, update the existing row
+            existing_row = existing_response.json()[0]
+            print(f"Found existing row: {existing_row}")
+            url = f"{SUPABASE_URL}/rest/v1/chat_databases"
+            headers = {
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation"
+            }
+            # Use PATCH with id in the URL path
+            response = requests.patch(f"{url}?id=eq.{existing_row['id']}", json={'database_id': database_id}, headers=headers)
+            print(f"PATCH response status: {response.status_code}")
+            print(f"PATCH response: {response.text}")
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail=f"Error updating database link: {response.text}")
+            
+            return response.json()[0]
+        else:
+            # No existing database, create new link
+            print("No existing database found, creating new link")
+            response = supabase_request("POST", "chat_databases", data={
+                'chat_id': chat_id,
+                'database_id': database_id
+            })
+            print(f"POST response status: {response.status_code}")
+            print(f"POST response: {response.text}")
+            
+            if response.status_code not in [200, 201]:
+                raise HTTPException(status_code=500, detail=f"Error linking database to chat: {response.text}")
+            
+            return response.json()[0]
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Exception in link_database_to_chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error linking database to chat: {str(e)}")
 
 async def unlink_database_from_chat(chat_id: str, database_id: str):
@@ -493,29 +599,48 @@ async def get_chat_databases(chat_id: str):
 async def load_session(chat_id: str):
     """Load a complete session (chat, messages, and databases)"""
     try:
+        print(f"Loading session for chat_id: {chat_id}")
+        
         # Get chat
         chat = await get_chat(chat_id)
+        print(f"Chat loaded: {chat['title']}")
         
         # Get messages
         messages = await get_chat_messages(chat_id)
+        print(f"Loaded {len(messages)} messages")
         
         # Get linked databases
         databases = await get_chat_databases(chat_id)
+        print(f"Found {len(databases)} linked databases")
         
-        # Download database files
+        # Download database files with error handling
         database_files = []
         for db in databases:
-            file_info = await download_database_file(db['id'])
-            database_files.append({
-                'database': db,
-                'fileData': file_info['fileData'],
-                'fileName': file_info['fileName']
-            })
+            try:
+                print(f"Attempting to download database: {db['name']} (id: {db['id']})")
+                file_info = await download_database_file(db['id'])
+                database_files.append({
+                    'database': db,
+                    'fileData': file_info['fileData'],
+                    'fileName': file_info['fileName']
+                })
+                print(f"Successfully downloaded database: {db['name']}")
+            except Exception as db_error:
+                print(f"Warning: Failed to download database file for {db.get('name', 'unknown')}: {str(db_error)}")
+                # Continue with other databases even if one fails
+                database_files.append({
+                    'database': db,
+                    'fileData': None,
+                    'fileName': None,
+                    'error': str(db_error)
+                })
         
+        print(f"Session loaded successfully with {len(database_files)} database files")
         return {
             'chat': chat,
             'messages': messages,
             'databases': database_files
         }
     except Exception as e:
+        print(f"Error loading session: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error loading session: {str(e)}")

@@ -4,6 +4,7 @@ images/
 pass.txt
 .env
 test.sql
+test2.sql
 # Ignore dependencies
 node_modules/
 supabase_migration.sql
