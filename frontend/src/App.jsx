@@ -5,6 +5,7 @@ import './Auth.css';
 import { chatService, messageService, databaseService, chatDatabaseService, sessionService } from './supabaseService';
 import authService from './authService';
 import LoginPage from './LoginPage';
+import { Upload, Send, Paperclip, Database, Plus, Settings, Trash2  } from 'lucide-react';
 
 // Home Page Component
 function HomePage({ navHidden }) {
@@ -206,6 +207,11 @@ function ChatPage({ navHidden, onLogout }) {
   const [chatList, setChatList] = useState([]);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [deletingChatId, setDeletingChatId] = useState(null);
+  const [isRecentsExpanded, setIsRecentsExpanded] = useState(true);
+  const [isTablesExpanded, setIsTablesExpanded] = useState(false);
+  const [isModeExpanded, setIsModeExpanded] = useState(false);
+  const [isCreativityExpanded, setIsCreativityExpanded] = useState(false);
+  const [previousSql, setPreviousSql] = useState(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -264,6 +270,7 @@ function ChatPage({ navHidden, onLogout }) {
       setMessages([]);
       setTokensUsed(null);
       setSchemaInfo(null);
+      setPreviousSql(null);
       setInput('');
       localStorage.removeItem('chatState');
     } catch (error) {
@@ -311,10 +318,11 @@ function ChatPage({ navHidden, onLogout }) {
   const loadChat = async (chatId) => {
     try {
       setIsLoadingChat(true);
-      
+
       // Clear previous database state
       setCurrentDatabaseId(null);
       setSchemaInfo(null);
+      setPreviousSql(null);
       
       const session = await sessionService.loadSession(chatId);
       
@@ -449,17 +457,23 @@ function ChatPage({ navHidden, onLogout }) {
         message: input,
         chat_history: messages,
         temperature: temperature,
-        mode: mode
+        mode: mode,
+        previous_sql: previousSql
       }, { headers });
 
-      const assistantMessage = { 
-        role: 'assistant', 
+      const assistantMessage = {
+        role: 'assistant',
         content: response.data.response,
         tokens_used: response.data.tokens_used
       };
-      
+
       setMessages([...newMessages, assistantMessage]);
       setTokensUsed(response.data.tokens_used);
+
+      // Update previous SQL if the response contains one
+      if (response.data.sql_query) {
+        setPreviousSql(response.data.sql_query);
+      }
 
       // Auto-save to Supabase if chat exists
       if (chatId) {
@@ -509,6 +523,7 @@ function ChatPage({ navHidden, onLogout }) {
   const clearChat = () => {
     setMessages([]);
     setTokensUsed(null);
+    setPreviousSql(null);
     setInput('');
     if (!currentChatId) {
       localStorage.removeItem('chatState');
@@ -624,61 +639,169 @@ function ChatPage({ navHidden, onLogout }) {
   };
 
   return (
-    <div className="chat-layout">
+    <div className="chat-page">
+      {/* Header Navigation */}
+      <header className="brutalist-header">
+        <div className="nav-left">DATABASE ASSISTANT</div>
+        <div className="nav-center">
+          {/* Empty for now */}
+        </div>
+        <div className="nav-right">
+          <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>HOME</span>
+          <span>ABOUT</span>
+          <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>CHAT</span>
+        </div>
+      </header>
+
+      <div className="chat-layout">
       <aside className="chat-sidebar">
         <div className="sidebar-top">
-          <div className="sidebar-brand">QueryVerse</div>
           <button onClick={createNewChat} className="new-chat-button sidebar-new-chat">
-            + New Chat
+            <Plus size={16} />
+            <span>New Chat</span>
           </button>
         </div>
 
-        <div className="sidebar-chats">
-          {chatList.length === 0 ? (
-            <div className="no-chats">No chats yet</div>
-          ) : (
-            chatList.map(chat => (
-              <div
-                key={chat.id}
-                className={`chat-list-item ${currentChatId === chat.id ? 'active' : ''} ${deletingChatId === chat.id ? 'deleting' : ''}`}
-                onClick={() => !deletingChatId && loadChat(chat.id)}
-              >
-                <div className="chat-item-content">
-                  <div className="chat-item-title">{chat.title}</div>
-                  <div className="chat-item-date">
-                    {new Date(chat.created_at).toLocaleDateString()}
+        <div className="sidebar-content">
+          <div className="sidebar-expandable-section">
+            <button onClick={() => setIsTablesExpanded(!isTablesExpanded)} className="new-chat-button sidebar-new-chat">
+              <Database size={16} />
+              <span>Table</span>
+            </button>
+            {isTablesExpanded && (
+              <div className="sidebar-tables">
+                {schemaInfo?.tables?.length > 0 ? (
+                  <div className="tables-list-sidebar">
+                    <div className="tables-header-sidebar">
+                      <Database size={14} />
+                      <span>Tables ({schemaInfo.tables.length})</span>
+                    </div>
+                    <div className="tables-list">
+                      {schemaInfo.tables.map((table, index) => (
+                        <div key={index} className="table-item">
+                          <Database size={12} />
+                          <span>{table}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="no-tables">No tables loaded</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="sidebar-expandable-section">
+            <button onClick={() => setIsModeExpanded(!isModeExpanded)} className="new-chat-button sidebar-new-chat">
+              <Settings size={16} />
+              <span>Mode</span>
+            </button>
+            {isModeExpanded && (
+              <div className="sidebar-mode-expanded">
                 <button
                   type="button"
-                  className="chat-delete-button"
-                  onClick={(e) => deleteChat(e, chat.id)}
-                  disabled={deletingChatId === chat.id}
-                  title="Delete chat"
-                  aria-label={`Delete ${chat.title}`}
+                  className={`sidebar-mode-option-expanded ${mode === 'query' ? 'active' : ''}`}
+                  onClick={() => setMode('query')}
                 >
-                  {deletingChatId === chat.id ? '…' : '×'}
+                  <Database size={16} />
+                  <div className="mode-option-content">
+                    <span className="mode-option-title">Query</span>
+                    <span className="mode-option-description">Generate SQL queries from natural language</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className={`sidebar-mode-option-expanded ${mode === 'general' ? 'active' : ''}`}
+                  onClick={() => setMode('general')}
+                >
+                  <Send size={16} />
+                  <div className="mode-option-content">
+                    <span className="mode-option-title">General</span>
+                    <span className="mode-option-description">General conversation and assistance</span>
+                  </div>
                 </button>
               </div>
-            ))
-          )}
+            )}
+          </div>
+
+          <div className="sidebar-expandable-section">
+            <button onClick={() => setIsCreativityExpanded(!isCreativityExpanded)} className="new-chat-button sidebar-new-chat">
+              <Settings size={16} />
+              <span>Creativity</span>
+            </button>
+            {isCreativityExpanded && (
+              <div className="sidebar-creativity-expanded">
+                <div className="creativity-content">
+                  <div className="temp-header">
+                    <label htmlFor="temperature-sidebar">{temperature.toFixed(1)}</label>
+                  </div>
+                  <div className="temp-description">AI Response Variability</div>
+                  <input
+                    id="temperature-sidebar"
+                    type="range"
+                    min="0.2"
+                    max="1.0"
+                    step="0.1"
+                    value={temperature}
+                    onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                    className="temperature-slider"
+                  />
+                  <div className="temp-labels">
+                    <span className="temp-label">Precise</span>
+                    <span className="temp-label">Creative</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="sidebar-recents">
+            <div className="recents-header">
+              <div className="recents-title">
+                <span>Recents</span>
+                <span className="recents-count">{chatList.length}</span>
+              </div>
+            </div>
+            <div className="sidebar-chats expanded">
+              {chatList.length === 0 ? (
+                <div className="no-chats">No chats yet</div>
+              ) : (
+                chatList.map(chat => (
+                  <div
+                    key={chat.id}
+                    className={`chat-list-item ${currentChatId === chat.id ? 'active' : ''} ${deletingChatId === chat.id ? 'deleting' : ''}`}
+                    onClick={() => !deletingChatId && loadChat(chat.id)}
+                  >
+                    <div className="chat-item-content">
+                      <div className="chat-item-title">{chat.title}</div>
+                      <div className="chat-item-date">
+                        {new Date(chat.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="chat-delete-button"
+                      onClick={(e) => deleteChat(e, chat.id)}
+                    disabled={deletingChatId === chat.id}
+                    title="Delete chat"
+                    aria-label={`Delete ${chat.title}`}
+                  >
+                    {deletingChatId === chat.id ? '…' : '×'}
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
         </div>
 
         <div className="sidebar-footer">
           <div className="sidebar-actions">
-            <button onClick={clearChat} className="clear-button sidebar-clear-button">
-              Clear Messages
-            </button>
             <button onClick={onLogout} className="logout-button sidebar-logout-button">
               Logout
             </button>
           </div>
-
-          {tokensUsed && (
-            <div className="sidebar-section sidebar-tokens">
-              {formatTokens(tokensUsed)}
-            </div>
-          )}
         </div>
       </aside>
 
@@ -693,49 +816,87 @@ function ChatPage({ navHidden, onLogout }) {
           </div>
         ) : messages.length === 0 ? (
           <div className="welcome-screen">
-            <div className="welcome-text">
-              <h1>Say it, I'll fetch it</h1>
-              <p>Ask me anything about your game rental database</p>
-            </div>
-            <div className="centered-input">
-              <div className="mode-selector">
-                <button
-                  type="button"
-                  className={`mode-option ${mode === 'query' ? 'active' : ''}`}
-                  onClick={() => setMode('query')}
-                  disabled={isLoading}
-                >
-                  Query
-                </button>
-                <button
-                  type="button"
-                  className={`mode-option ${mode === 'general' ? 'active' : ''}`}
-                  onClick={() => setMode('general')}
-                  disabled={isLoading}
-                >
-                  General
-                </button>
-              </div>
-              <div className="input-row">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="What to bring you, my lord?"
-                  className="message-input centered"
-                  disabled={isLoading}
-                  rows={1}
+            {!schemaInfo ? (
+              <div className="upload-prompt">
+                <div className="upload-icon-wrapper">
+                  <Database className="upload-icon" size={64} />
+                </div>
+                <div className="upload-text">
+                  <h2>No Database Loaded</h2>
+                  <p>Upload your SQL schema to start querying your database</p>
+                </div>
+                <label htmlFor="welcome-schema-input" className="upload-prompt-button">
+                  <Upload size={20} />
+                  <span>Upload SQL Schema</span>
+                </label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".sql"
+                  onChange={handleSchemaUpload}
+                  disabled={isUploadingSchema}
+                  className="schema-file-input"
+                  id="welcome-schema-input"
                 />
-                <button
-                  onClick={sendMessage}
-                  disabled={isLoading || !input.trim()}
-                  className="send-button"
-                >
-                  {isLoading ? 'Sending...' : 'Send'}
-                </button>
               </div>
-            </div>
+            ) : (
+              <>
+                <div className="welcome-text">
+                  <h1>Say it, I'll fetch it</h1>
+                  <p>Ask me anything about your database</p>
+                </div>
+                <div className="centered-input">
+                  <div className="input-wrapper">
+                    <button
+                      type="button"
+                      className="input-icon attachment-icon"
+                      onClick={() => fileInputRef.current?.click()}
+                      title="Upload SQL Schema"
+                    >
+                      <Paperclip size={18} />
+                    </button>
+                    <button
+                      type="button"
+                      className="input-icon trash-icon"
+                      onClick={clearChat}
+                      title="Clear Messages"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                    <textarea
+                      ref={textareaRef}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      placeholder="What to bring you, my lord?"
+                      className="message-input centered"
+                      disabled={isLoading}
+                      rows={1}
+                    />
+                    <button
+                      onClick={sendMessage}
+                      disabled={isLoading || !input.trim()}
+                      className="input-icon send-icon"
+                    >
+                      {isLoading ? (
+                        <span>Sending...</span>
+                      ) : (
+                        <Send size={18} />
+                      )}
+                    </button>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".sql"
+                    onChange={handleSchemaUpload}
+                    disabled={isUploadingSchema}
+                    className="schema-file-input"
+                    style={{ display: 'none' }}
+                  />
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <>
@@ -743,9 +904,6 @@ function ChatPage({ navHidden, onLogout }) {
               <div className="messages">
                 {messages.map((message, index) => (
                   <div key={index} className={`message ${message.role}`}>
-                    <div className="message-avatar">
-                      {message.role === 'user' ? 'U' : 'A'}
-                    </div>
                     <div className="message-content">
                       {message.role === 'assistant' ? (
                         cleanResponse(message.content).split('\n').map((line, lineIndex) => (
@@ -765,7 +923,6 @@ function ChatPage({ navHidden, onLogout }) {
                 ))}
                 {isLoading && (
                   <div className="message assistant">
-                    <div className="message-avatar">A</div>
                     <div className="message-content loading">
                       <div className="typing-indicator">
                         <span></span>
@@ -781,25 +938,23 @@ function ChatPage({ navHidden, onLogout }) {
             </div>
 
             <div className="input-container">
-              <div className="mode-selector">
+              <div className="input-wrapper">
                 <button
                   type="button"
-                  className={`mode-option ${mode === 'query' ? 'active' : ''}`}
-                  onClick={() => setMode('query')}
-                  disabled={isLoading}
+                  className="input-icon attachment-icon"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Upload SQL Schema"
                 >
-                  Query
+                  <Paperclip size={18} />
                 </button>
                 <button
                   type="button"
-                  className={`mode-option ${mode === 'general' ? 'active' : ''}`}
-                  onClick={() => setMode('general')}
-                  disabled={isLoading}
+                  className="input-icon trash-icon"
+                  onClick={clearChat}
+                  title="Clear Messages"
                 >
-                  General
+                  <Trash2 size={18} />
                 </button>
-              </div>
-              <div className="input-row">
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -813,66 +968,30 @@ function ChatPage({ navHidden, onLogout }) {
                 <button
                   onClick={sendMessage}
                   disabled={isLoading || !input.trim()}
-                  className="send-button"
+                  className="input-icon send-icon"
                 >
-                  {isLoading ? 'Sending...' : 'Send'}
+                  {isLoading ? (
+                    <span>Sending...</span>
+                  ) : (
+                    <Send size={18} />
+                  )}
                 </button>
               </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".sql"
+                onChange={handleSchemaUpload}
+                disabled={isUploadingSchema}
+                className="schema-file-input"
+                style={{ display: 'none' }}
+              />
             </div>
+            <div className="input-black-box"></div>
           </>
         )}
       </main>
-
-      <aside className="chat-controls-right">
-        <div className="right-card schema-card">
-          <div className="right-card-label">Schema</div>
-          <div className="schema-upload right-schema">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".sql"
-              onChange={handleSchemaUpload}
-              disabled={isUploadingSchema}
-              className="schema-file-input"
-              id="schema-file-input"
-            />
-            <label
-              htmlFor="schema-file-input"
-              className={`schema-upload-button ${isUploadingSchema ? 'uploading' : ''}`}
-            >
-              {isUploadingSchema ? 'Uploading...' : 'Upload SQL Schema'}
-            </label>
-            {schemaInfo && (
-              <div className="schema-info right-schema-info">
-                <div className="schema-status">{schemaInfo.status}</div>
-                <div className="schema-message">{schemaInfo.message}</div>
-                {schemaInfo.tables?.length > 0 && (
-                  <div className="schema-tables">
-                    <strong>Tables:</strong> {schemaInfo.tables.join(', ')}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="right-card creativity-card">
-          <div className="right-card-label">Creativity</div>
-          <div className="temperature-control right-temperature">
-            <label htmlFor="temperature-right">{temperature.toFixed(1)}</label>
-            <input
-              id="temperature-right"
-              type="range"
-              min="0.2"
-              max="1.0"
-              step="0.1"
-              value={temperature}
-              onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              className="temperature-slider"
-            />
-          </div>
-        </div>
-      </aside>
+      </div>
     </div>
   );
 }
@@ -977,47 +1096,6 @@ function App() {
   const updateChatState = (updates) => {
     setChatState(prev => ({ ...prev, ...updates }));
   };
-
-  // Create star particles for all pages
-  useEffect(() => {
-    const createStars = () => {
-      const starsContainer = document.createElement('div');
-      starsContainer.style.position = 'fixed';
-      starsContainer.style.top = '0';
-      starsContainer.style.left = '0';
-      starsContainer.style.width = '100%';
-      starsContainer.style.height = '100%';
-      starsContainer.style.pointerEvents = 'none';
-      starsContainer.style.zIndex = '4';
-      document.body.appendChild(starsContainer);
-
-      for (let i = 0; i < 40; i++) {
-        const star = document.createElement('div');
-        star.className = 'star';
-        
-        const endX = (Math.random() - 0.5) * 2000;
-        const endY = (Math.random() - 0.5) * 2000;
-        star.style.setProperty('--end-x', `${endX}px`);
-        star.style.setProperty('--end-y', `${endY}px`);
-        
-        star.style.animationDelay = `${Math.random() * 10}s`;
-        star.style.animationDuration = `${10 + Math.random() * 10}s`;
-        
-        star.style.left = `${Math.random() * 100}%`;
-        star.style.top = `${Math.random() * 100}%`;
-        
-        const size = 1 + Math.random() * 2;
-        star.style.width = `${size}px`;
-        star.style.height = `${size}px`;
-        
-        star.style.opacity = 0.3 + Math.random() * 0.7;
-        
-        starsContainer.appendChild(star);
-      }
-    };
-
-    createStars();
-  }, []);
 
   return (
     <div className="app-wrapper">

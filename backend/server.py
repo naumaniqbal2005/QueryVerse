@@ -58,22 +58,41 @@ print("Simple name matcher ready!")
 
 # SQL_GENERATOR_PROMPT = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
 
-RESPONSE_GENERATOR_PROMPT = """You are a database assistant.
+RESPONSE_GENERATOR_PROMPT = """You are a helpful database assistant.
 
-Generate concise, natural-sounding answers that explain the meaning of the data, not just the raw values.
+Convert database query results into a clear, human-readable response.
 
-Rules:
-- Answer directly and confidently.
-- Focus on the key insight or takeaway.
-- Avoid describing database structure unless explicitly asked.
-- Do not mention SQL, tables, joins, foreign keys, or query mechanics unless relevant to the user's question.
-- Eliminate redundancy and repeated values.
-- If the result reveals a relationship, explain it in plain language.
-- Prefer business-friendly language over technical database terminology.
-- Keep answers to 1-3 sentences."""
+Be concise but informative. Never include SQL, table names, or database terminology in your response.
+Provide direct answers to the user's question based on the query results. Don't miss out any information which is
+provided in the results."""
 
 DATABASE_SCHEMA = ""
 DB_NAME = "mydb.db"
+
+def sanitize_user_message(message: str) -> str:
+    """Remove prompt injection attempts from user message."""
+    import re
+    
+    # List of prompt injection keywords to remove
+    injection_keywords = [
+        'ignore', 'forget', 'disregard', 'override', 'bypass',
+        'ignore previous', 'forget instructions', 'disregard rules',
+        'override instructions', 'bypass security', 'ignore all',
+        'forget all', 'disregard all', 'override all', 'bypass all'
+    ]
+    
+    sanitized = message
+    
+    # Remove injection keywords (case-insensitive)
+    for keyword in injection_keywords:
+        # Use word boundaries to avoid partial matches
+        pattern = r'\b' + re.escape(keyword) + r'\b'
+        sanitized = re.sub(pattern, '', sanitized, flags=re.IGNORECASE)
+    
+    # Clean up extra spaces left after removal
+    sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+    
+    return sanitized
 
 def get_general_info_prompt():
     return f"""
@@ -100,11 +119,13 @@ class ChatRequest(BaseModel):
     chat_history: List[ChatMessage] = []
     temperature: float = 0.7
     mode: str
+    previous_sql: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
     chat_history: List[ChatMessage]
     tokens_used: Optional[dict] = None
+    sql_query: Optional[str] = None
 
 class HealthResponse(BaseModel):
     status: str
@@ -135,6 +156,36 @@ def execute_sql_query(sql_query):
         return results, column_names, None
     except sqlite3.Error as e:
         return None, None, str(e)
+
+
+def render_response(data):
+    """Render structured JSON from the LLM into a readable text response."""
+    resp_type = data.get("type", "text")
+    summary = data.get("summary", "")
+    items = data.get("items", [])
+
+    if resp_type == "text":
+        return summary
+
+    elif resp_type == "list":
+        lines = [summary] if summary else []
+        for item in items:
+            title = item.get("title", "")
+            lines.append(f"- {title}")
+        return "\n".join(lines)
+
+    elif resp_type == "cards":
+        parts = [summary] if summary else []
+        for item in items:
+            title = item.get("title", "")
+            desc = item.get("description", "")
+            if desc:
+                parts.append(f"{title}\n   {desc}")
+            else:
+                parts.append(title)
+        return "\n\n".join(parts)
+
+    return summary
 
 def parse_sql_schema(sql_content):
     """Parse SQL schema to extract table names and columns."""
@@ -339,6 +390,9 @@ async def chat(request: ChatRequest, credentials: HTTPAuthorizationCredentials =
     if not request.message or not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     
+    # Sanitize user message to prevent prompt injection
+    sanitized_message = sanitize_user_message(request.message)
+    
     # Check if schema has been uploaded
     if not DATABASE_SCHEMA:
         raise HTTPException(status_code=400, detail="No database schema loaded. Please upload a SQL schema file first using /upload-schema endpoint.")
@@ -349,7 +403,7 @@ async def chat(request: ChatRequest, credentials: HTTPAuthorizationCredentials =
     if request.mode == "general":
         info_messages = [
             {"role": "system", "content": get_general_info_prompt()},
-            {"role": "user", "content": request.message}
+            {"role": "user", "content": sanitized_message}
         ]
         response, info_input_tokens, info_output_tokens = query_groq(info_messages, 0.1)
         print(f"Response: {response}")
@@ -359,47 +413,80 @@ async def chat(request: ChatRequest, credentials: HTTPAuthorizationCredentials =
             "input": info_input_tokens,
             "output": info_output_tokens,
         }
-        chat_history.append({"role": "user", "content": request.message})
+        chat_history.append({"role": "user", "content": sanitized_message})
     else:
-        enhanced_message = name_matcher.enhance_query(request.message)
-        chat_history.append({"role": "user", "content": enhanced_message})
+        enhanced_message = name_matcher.enhance_query(sanitized_message)
 
         try:
-            sql_generator_prompt = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'."""
-            sql_messages = [
-                {"role": "system", "content": sql_generator_prompt},
-                {"role": "user", "content": enhanced_message}
-            ]
+            # Build context from previous SQL query if available
+            context = ""
+            if request.previous_sql:
+                context = f"\n\nPrevious SQL query: {request.previous_sql}\nUse this as context for understanding references like 'their', 'those', etc."
+            
+#             sql_generator_prompt = f"""Convert question to SQLite using schema:{DATABASE_SCHEMA}
+#             Return ONLY SQL. Use JOINs for related tables. Dates as TEXT 'YYYY-MM-DD'.
+#             When making a query make sure to look at the previous chat history to understand the context.{context}"""
+            sql_generator_prompt = f"""You are a SQL expert. Convert the natural language question to a valid SQLite query using this schema: {DATABASE_SCHEMA}
+
+CRITICAL RULES:
+1. ONLY process database-related queries about the provided schema. If the user asks anything unrelated to databases (e.g., general knowledge, programming help, creative writing, personal questions, etc.), respond exactly with: "Can't help you with that."
+2. ALWAYS include a FROM clause - never omit it
+3. When selecting from multiple tables, ALWAYS use proper JOIN syntax (INNER JOIN, LEFT JOIN, etc.)
+4. ALWAYS specify JOIN conditions using ON with the correct foreign key relationships
+5. Use table aliases consistently (e.g., C for Clients, T for Tasks) and reference them in all column selections
+6. Return ONLY the complete SQL query - no explanations, no markdown formatting
+7. Ensure the query is syntactically complete and executable
+8. Dates should be formatted as TEXT 'YYYY-MM-DD'
+
+Examples of correct syntax:
+- Single table: SELECT column1, column2 FROM table_name WHERE condition
+- Multiple tables: SELECT T1.col1, T2.col2 FROM table1 T1 INNER JOIN table2 T2 ON T1.id = T2.foreign_id
+
+Previous SQL query context: {context}
+Chat history context: Use the conversation history to understand pronouns and references like 'their', 'those', etc.
+
+Generate a complete, executable SQL query for the user's question."""
+            
+            # Build SQL messages with chat history for context
+            sql_messages = [{"role": "system", "content": sql_generator_prompt}]
+            
+            # Add previous conversation for context (excluding current message)
+            for msg in chat_history:
+                sql_messages.append({"role": msg["role"], "content": msg["content"]})
+            
+            # Add current message
+            sql_messages.append({"role": "user", "content": enhanced_message})
 
             sql_query, sql_input_tokens, sql_output_tokens = query_groq(sql_messages, 0.1)
-
-            sql_query = sql_query.strip()
-            if sql_query.startswith("```sql"):
-                sql_query = sql_query[6:]
-            if sql_query.startswith("```"):
-                sql_query = sql_query[3:]
-            if sql_query.endswith("```"):
-                sql_query = sql_query[:-3]
-
-            if ';' in sql_query:
-                sql_query = sql_query.split(';')[0] + ';'
-            else:
-                lines = sql_query.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if line and line.upper().startswith(('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH')):
-                        sql_query = line
-                        break
-
-            sql_query = sql_query.strip()
-
             print(f"Generated SQL Query: {sql_query}")
+
+            # sql_query = sql_query.strip()
+            # if sql_query.startswith("```sql"):
+            #     sql_query = sql_query[6:]
+            # if sql_query.startswith("```"):
+            #     sql_query = sql_query[3:]
+            # if sql_query.endswith("```"):
+            #     sql_query = sql_query[:-3]
+
+            # if ';' in sql_query:
+            #     sql_query = sql_query.split(';')[0] + ';'
+            # else:
+            #     lines = sql_query.split('\n')
+            #     for line in lines:
+            #         line = line.strip()
+            #         if line and line.upper().startswith(('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH')):
+            #             sql_query = line
+            #             break
+
+            # sql_query = sql_query.strip()
+
+            print(f"Altered SQL Query: {sql_query}")
             print(f"Query length: {len(sql_query)}")
             print(f"Contains semicolon: {';' in sql_query}")
             print(f"Database Schema: {DATABASE_SCHEMA}")
 
             results, column_names, error = execute_sql_query(sql_query)
-
+            print(f"Results: {results}")
             if error:
                 response = f"Database error: {error}"
             elif results is None:
@@ -412,7 +499,6 @@ async def chat(request: ChatRequest, credentials: HTTPAuthorizationCredentials =
                 ]
 
                 response, resp_input_tokens, resp_output_tokens = query_groq(response_messages, request.temperature)
-                
 
                 total_input = sql_input_tokens + resp_input_tokens
                 total_output = sql_output_tokens + resp_output_tokens
@@ -431,7 +517,8 @@ async def chat(request: ChatRequest, credentials: HTTPAuthorizationCredentials =
     return ChatResponse(
         response=response,
         chat_history=chat_history,
-        tokens_used=tokens_used
+        tokens_used=tokens_used,
+        sql_query=sql_query if request.mode != "general" else None
     )
 
 # ============ Supabase CRUD Endpoints ============
