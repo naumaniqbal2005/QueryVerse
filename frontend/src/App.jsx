@@ -5,188 +5,104 @@ import './Auth.css';
 import { chatService, messageService, databaseService, chatDatabaseService, sessionService } from './supabaseService';
 import authService from './authService';
 import LoginPage from './LoginPage';
-import { Upload, Send, Paperclip, Database, Plus, Settings, Trash2  } from 'lucide-react';
+import Strands from './Strands';
+import { Upload, Send, Paperclip, Database, Plus, Settings, Trash2, LogOut, Sparkles, Table, HelpCircle, Lightbulb, PenSquare } from 'lucide-react';
 
 // Home Page Component
 function HomePage({ navHidden }) {
-  const [scrollClass, setScrollClass] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const greekTitleRef = useRef(null);
-  const queryRef = useRef(null);
-  const verseRef = useRef(null);
-  const heroRef = useRef(null);
-  const previousScrollClass = useRef('');
-
-  // Helper functions to handle animation transitions properly
-  const setScrollState = (el, className) => {
-    // 1. Freeze the element at its current computed transform
-    const current = getComputedStyle(el).transform;
-    el.style.transform = current;        // inline style wins over animation
-    el.style.animation = 'none';         // kill the keyframe immediately
-
-    // 2. Force a reflow so the browser commits the frozen state
-    void el.offsetHeight;
-
-    // 3. Now swap to the scroll class — transition takes over cleanly
-    el.classList.remove('scrolling', 'fade-out');
-    el.classList.add(className);
-    el.style.transform = '';             // let CSS classes drive it again
-    el.style.animation = '';
-  };
-
-  const clearScrollState = (el) => {
-    // 1. Freeze at current position
-    const current = getComputedStyle(el).transform;
-    el.style.transform = current;
-    el.style.animation = 'none';
-    void el.offsetHeight;
-
-    // 2. Remove scroll classes — CSS transition takes it back to transform: none
-    el.classList.remove('scrolling', 'fade-out');
-    el.style.transform = '';   // let the base rule take over (no transform = identity)
-    el.style.animation = 'none'; // keep animation suppressed during transition back
-
-    // 3. After the transition finishes (0.6s), release animation suppression
-    clearTimeout(el._floatTimer);
-    el._floatTimer = setTimeout(() => {
-      el.style.animation = '';  // now gentleFloat resumes from a clean resting state
-    }, 650); // slightly longer than your 0.6s transition
-  };
-
-  // Main animation handler function
-  const handleHeroAnimation = (newScrollClass, previousScrollClass) => {
-    if (!heroRef.current) return;
-
-    const hero = heroRef.current;
-    
-    if (newScrollClass === 'scrolling') {
-      setScrollState(hero, 'scrolling');
-    } else if (newScrollClass === 'fade-out') {
-      setScrollState(hero, 'fade-out');
-    } else if (previousScrollClass === 'scrolling' || previousScrollClass === 'fade-out') {
-      // Scrolling up from scroll/fade-out state back to main
-      clearScrollState(hero);
-    }
-  };
-
-  // Measure query width for CSS positioning
-  useEffect(() => {
-    if (queryRef.current) {
-      const w = queryRef.current.offsetWidth;
-      document.documentElement.style.setProperty('--query-width', `${w + 20}px`);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Loading buffer for smooth initialization
-    const loadingTimer = setTimeout(() => {
-      setIsLoading(false);
-    }, 500); // Reduced from 1.5s to 0.5s
-
-    const handleScroll = () => {
-      if (isLoading) return; // Don't handle scroll during loading
-      
-      const scrollY = window.scrollY;
-      let newScrollClass = '';
-      
-      if (scrollY > 300) {
-        newScrollClass = 'fade-out';
-      } else if (scrollY > 50) {
-        newScrollClass = 'scrolling';
-      } else {
-        newScrollClass = '';
-      }
-      
-      // Only apply FLIP animation when class actually changes
-      if (newScrollClass !== previousScrollClass.current) {
-        // Handle hero animation transitions with the new handler
-        handleHeroAnimation(newScrollClass, previousScrollClass.current);
-        
-        previousScrollClass.current = newScrollClass;
-      }
-      
-      setScrollClass(newScrollClass);
-    };
-
-    window.addEventListener('scroll', handleScroll);
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      clearTimeout(loadingTimer);
-    };
-  }, [isLoading]);
-
   return (
     <div className="brutalist-home">
       {/* Header Navigation */}
       <header className="brutalist-header">
-        <div className="nav-left">DATABASE ASSISTANT</div>
         <div className="nav-center">
           {/* Empty for now */}
         </div>
         <div className="nav-right">
-          <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>HOME</span>
-          <span>ABOUT</span>
-          <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>CHAT</span>
+          <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>Home</span>
+          <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>Chat</span>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="brutalist-main">
-        {/* Interactive Hero Image */}
-        <div className="hero-visual">
-          <img 
-            ref={heroRef}
-            src="/images/phil.svg" 
-            alt="Database Visualization" 
-            className={`database-hero ${scrollClass} ${isLoading ? 'loading' : ''}`} 
+      <div className="home-content">
+        <div className="strands-background">
+          <Strands
+            colors={["#F97316","#7C3AED","#06B6D4"]}
+            count={3}
+            speed={0.5}
+            amplitude={1}
+            waviness={1}
+            thickness={0.7}
+            glow={2.6}
+            taper={3}
+            spread={1}
+            intensity={0.6}
+            saturation={2}
+            opacity={1}
+            scale={1.5}
+            glass={false}
+            refraction={1}
+            dispersion={1}
+            glassSize={1}
+            hueShift={0}
           />
-          
-          {/* Greek-style Overlays */}
-          <div className="greek-overlays">
-            <div ref={greekTitleRef} className={`greek-title ${scrollClass}`}>
-              <div ref={queryRef} className="greek-query">QUERY</div>
-              <div ref={verseRef} className="greek-verse">VERSE</div>
-            </div>
-            <div className={`greek-subtitle ${scrollClass}`}>Ἡ ΠΥΞΙΑ ΤΗΣ ΓΝΩΣΗΣΣΗΣ</div>
+        </div>
+        <div className="home-hero">
+          <h1 className="home-title italiana-regular">QueryVerse</h1>
+          <p className="home-subtitle">Your intelligent database companion</p>
+          <button onClick={() => window.location.hash = '#chat'} className="home-cta-button">
+            Get Started
+          </button>
+        </div>
+        
+        <div className="home-features">
+          <div className="feature-card">
+            <h3 className="feature-title">Natural Language Queries</h3>
+            <p className="feature-description">Ask questions in plain English and get instant SQL queries</p>
+          </div>
+          <div className="feature-card">
+            <h3 className="feature-title">Database Integration</h3>
+            <p className="feature-description">Upload your SQL schema and start querying immediately</p>
+          </div>
+          <div className="feature-card">
+            <h3 className="feature-title">Smart Responses</h3>
+            <p className="feature-description">AI-powered analysis with context-aware answers</p>
           </div>
         </div>
 
-        {/* Extended Content Cards */}
-        <div className={`extended-content ${scrollClass}`}>
-          <div className="content-grid">
-            <div className="feature-card">
-              <h3>Natural Language Queries</h3>
-              <p>Ask questions in plain English, no SQL knowledge required</p>
+        <div className="home-comparison">
+          <h2 className="comparison-title">Traditional vs QueryVerse</h2>
+          <div className="comparison-container">
+            <div className="comparison-side traditional">
+              <h3 className="side-title">Traditional Database Queries</h3>
+              <ul className="side-list">
+                <li className="side-item">❌ Complex SQL syntax required</li>
+                <li className="side-item">❌ Time-consuming to write queries</li>
+                <li className="side-item">❌ No context memory between queries</li>
+                <li className="side-item">❌ Manual schema understanding needed</li>
+                <li className="side-item">❌ Slow iteration and debugging</li>
+              </ul>
             </div>
-            <div className="feature-card">
-              <h3>Real-time Processing</h3>
-              <p>Get instant responses with optimized token usage</p>
-            </div>
-            <div className="feature-card">
-              <h3>Accurate Results</h3>
-              <p>Precise SQL generation and reliable data retrieval</p>
+            <div className="comparison-divider"></div>
+            <div className="comparison-side modern">
+              <h3 className="side-title">QueryVerse RAG Approach</h3>
+              <ul className="side-list">
+                <li className="side-item">✅ Natural language input</li>
+                <li className="side-item">✅ Instant query generation</li>
+                <li className="side-item">✅ Context-aware memory system</li>
+                <li className="side-item">✅ Automatic schema analysis</li>
+                <li className="side-item">✅ Faster responses with RAG</li>
+              </ul>
             </div>
           </div>
         </div>
 
-        {/* Preview Card - Bottom Left */}
-        <div className="preview-card">
-          <div className="preview-overlay">QUERY INTERFACE</div>
-        </div>
-
-        {/* Sidebar - Right */}
-        <div className="right-sidebar">
-          <div className="sidebar-text">
-            <div className="sidebar-initial">D.</div>
-            <div className="sidebar-label">Database</div>
+        <footer className="home-footer">
+          <div className="footer-content">
+            <div className="footer-logo italiana-regular">QueryVerse</div>
+            <div className="footer-copy">© 2026 QueryVerse. All rights reserved.</div>
           </div>
-        </div>
-
-        {/* Footer - Bottom Right */}
-        <div className="brutalist-footer">
-          <div className="scroll-text">KEEP SCROLLING</div>
-        </div>
-      </main>
+        </footer>
+      </div>
     </div>
   );
 }
@@ -576,6 +492,8 @@ function ChatPage({ navHidden, onLogout }) {
           try {
             await chatDatabaseService.linkDatabaseToChat(chatId, response.data.database_id);
             console.log('Database linked to chat successfully');
+            // Refresh chat list to update database names in recents
+            await loadUserChats(userId);
           } catch (linkError) {
             console.error('Failed to link database to chat:', linkError);
           }
@@ -592,30 +510,6 @@ function ChatPage({ navHidden, onLogout }) {
     } finally {
       setIsUploadingSchema(false);
     }
-  };
-
-  const formatTokens = (tokens) => {
-    if (!tokens) return null;
-    return (
-      <div className="token-info">
-        <div className="token-total">
-          <span className="token-label">Tokens Used:</span>
-          <span className="token-value">{tokens.total}</span>
-        </div>
-        <div className="token-breakdown">
-          <span className="token-input">Input: {tokens.input}</span>
-          <span className="token-output">Output: {tokens.output}</span>
-        </div>
-        {tokens.sql_generation && (
-          <div className="token-details">
-            <small>
-              <div>SQL Generation: {tokens.sql_generation.input} → {tokens.sql_generation.output}</div>
-              <div>Response Generation: {tokens.response_generation.input} → {tokens.response_generation.output}</div>
-            </small>
-          </div>
-        )}
-      </div>
-    );
   };
 
   const cleanResponse = (content) => {
@@ -642,30 +536,30 @@ function ChatPage({ navHidden, onLogout }) {
     <div className="chat-page">
       {/* Header Navigation */}
       <header className="brutalist-header">
-        <div className="nav-left">DATABASE ASSISTANT</div>
         <div className="nav-center">
           {/* Empty for now */}
         </div>
         <div className="nav-right">
-          <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>HOME</span>
-          <span>ABOUT</span>
-          <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>CHAT</span>
+          <span onClick={() => window.location.hash = '#home'} style={{cursor: 'pointer'}}>Home</span>
+          <span onClick={() => window.location.hash = '#chat'} style={{cursor: 'pointer'}}>Chat</span>
         </div>
       </header>
+
+      <div className="chat-queryverse-logo italiana-regular">QueryVerse</div>
 
       <div className="chat-layout">
       <aside className="chat-sidebar">
         <div className="sidebar-top">
           <button onClick={createNewChat} className="new-chat-button sidebar-new-chat">
-            <Plus size={16} />
+            <PenSquare size={16} />
             <span>New Chat</span>
           </button>
         </div>
 
         <div className="sidebar-content">
           <div className="sidebar-expandable-section">
-            <button onClick={() => setIsTablesExpanded(!isTablesExpanded)} className="new-chat-button sidebar-new-chat">
-              <Database size={16} />
+            <button onClick={() => setIsTablesExpanded(!isTablesExpanded)} className={`new-chat-button sidebar-new-chat ${isTablesExpanded ? 'active' : ''}`}>
+              <Table size={16} />
               <span>Table</span>
             </button>
             {isTablesExpanded && (
@@ -673,13 +567,13 @@ function ChatPage({ navHidden, onLogout }) {
                 {schemaInfo?.tables?.length > 0 ? (
                   <div className="tables-list-sidebar">
                     <div className="tables-header-sidebar">
-                      <Database size={14} />
+                      <Table size={14} />
                       <span>Tables ({schemaInfo.tables.length})</span>
                     </div>
                     <div className="tables-list">
                       {schemaInfo.tables.map((table, index) => (
                         <div key={index} className="table-item">
-                          <Database size={12} />
+                          <Table size={12} />
                           <span>{table}</span>
                         </div>
                       ))}
@@ -693,7 +587,7 @@ function ChatPage({ navHidden, onLogout }) {
           </div>
 
           <div className="sidebar-expandable-section">
-            <button onClick={() => setIsModeExpanded(!isModeExpanded)} className="new-chat-button sidebar-new-chat">
+            <button onClick={() => setIsModeExpanded(!isModeExpanded)} className={`new-chat-button sidebar-new-chat ${isModeExpanded ? 'active' : ''}`}>
               <Settings size={16} />
               <span>Mode</span>
             </button>
@@ -704,7 +598,7 @@ function ChatPage({ navHidden, onLogout }) {
                   className={`sidebar-mode-option-expanded ${mode === 'query' ? 'active' : ''}`}
                   onClick={() => setMode('query')}
                 >
-                  <Database size={16} />
+                  <HelpCircle size={16} />
                   <div className="mode-option-content">
                     <span className="mode-option-title">Query</span>
                     <span className="mode-option-description">Generate SQL queries from natural language</span>
@@ -715,7 +609,7 @@ function ChatPage({ navHidden, onLogout }) {
                   className={`sidebar-mode-option-expanded ${mode === 'general' ? 'active' : ''}`}
                   onClick={() => setMode('general')}
                 >
-                  <Send size={16} />
+                  <Lightbulb size={16} />
                   <div className="mode-option-content">
                     <span className="mode-option-title">General</span>
                     <span className="mode-option-description">General conversation and assistance</span>
@@ -726,8 +620,8 @@ function ChatPage({ navHidden, onLogout }) {
           </div>
 
           <div className="sidebar-expandable-section">
-            <button onClick={() => setIsCreativityExpanded(!isCreativityExpanded)} className="new-chat-button sidebar-new-chat">
-              <Settings size={16} />
+            <button onClick={() => setIsCreativityExpanded(!isCreativityExpanded)} className={`new-chat-button sidebar-new-chat ${isCreativityExpanded ? 'active' : ''}`}>
+              <Sparkles size={16} />
               <span>Creativity</span>
             </button>
             {isCreativityExpanded && (
@@ -760,7 +654,6 @@ function ChatPage({ navHidden, onLogout }) {
             <div className="recents-header">
               <div className="recents-title">
                 <span>Recents</span>
-                <span className="recents-count">{chatList.length}</span>
               </div>
             </div>
             <div className="sidebar-chats expanded">
@@ -778,6 +671,12 @@ function ChatPage({ navHidden, onLogout }) {
                       <div className="chat-item-date">
                         {new Date(chat.created_at).toLocaleDateString()}
                       </div>
+                      {chat.database_names && chat.database_names.length > 0 && (
+                        <div className="chat-item-database">
+                          <Database size={12} />
+                          <span>{chat.database_names.join(', ')}</span>
+                        </div>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -798,9 +697,27 @@ function ChatPage({ navHidden, onLogout }) {
 
         <div className="sidebar-footer">
           <div className="sidebar-actions">
-            <button onClick={onLogout} className="logout-button sidebar-logout-button">
-              Logout
-            </button>
+            <div className="user-profile-section">
+              <div className="user-circle">
+                <span className="user-initial">
+                  {authService.getCurrentUser()?.email?.charAt(0).toUpperCase() || 'U'}
+                </span>
+              </div>
+              <div className="user-info">
+                <div className="user-name">
+                  {authService.getCurrentUser()?.full_name || 'User'}
+                </div>
+                <div className="user-email">
+                  {authService.getCurrentUser()?.email || ''}
+                </div>
+              </div>
+            </div>
+            <div className="logout-section">
+              <button onClick={onLogout} className="logout-button sidebar-logout-button">
+                <LogOut size={16} />
+                <span>Logout</span>
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -842,7 +759,7 @@ function ChatPage({ navHidden, onLogout }) {
             ) : (
               <>
                 <div className="welcome-text">
-                  <h1>Say it, I'll fetch it</h1>
+                  <h1>Where should we begin?</h1>
                   <p>Ask me anything about your database</p>
                 </div>
                 <div className="centered-input">
@@ -1093,15 +1010,55 @@ function App() {
     localStorage.setItem('chatState', JSON.stringify(chatState));
   }, [chatState]);
 
+  // Generate stars background (only on chat page)
+  useEffect(() => {
+    const createStars = () => {
+      const starCount = 30; // Decreased amount
+      const body = document.body;
+      
+      for (let i = 0; i < starCount; i++) {
+        const star = document.createElement('div');
+        star.className = 'star';
+        
+        // Random starting positions
+        const startX = Math.random() * 100 + '%';
+        const startY = Math.random() * 100 + '%';
+        star.style.left = startX;
+        star.style.top = startY;
+        
+        // Random end positions
+        const endX = (Math.random() - 0.5) * 2000 + 'px';
+        const endY = (Math.random() - 0.5) * 2000 + 'px';
+        star.style.setProperty('--end-x', endX);
+        star.style.setProperty('--end-y', endY);
+        
+        // Random animation delay (0-2s) so stars don't all start at once
+        star.style.animationDelay = 0.1
+        // Random animation duration (8-12s) so stars have different cycle lengths
+        star.style.animationDuration = (8 + Math.random() * 6) + 's';
+        
+        body.appendChild(star);
+      }
+    };
+
+    // Only create stars when on chat page
+    if (currentPage === '#chat') {
+      createStars();
+    }
+
+    return () => {
+      // Cleanup stars when leaving chat page or unmounting
+      const stars = document.querySelectorAll('.star');
+      stars.forEach(star => star.remove());
+    };
+  }, [currentPage]);
+
   const updateChatState = (updates) => {
     setChatState(prev => ({ ...prev, ...updates }));
   };
 
   return (
     <div className="app-wrapper">
-      <button className="theme-toggle" onClick={toggleTheme}>
-        {isInverted ? '☀️' : '🌙'}
-      </button>
       {currentPage === '#home' && <HomePage navHidden={navHidden} />}
       {currentPage === '#chat' && (
         isAuthenticated ? (
