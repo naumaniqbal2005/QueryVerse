@@ -10,6 +10,7 @@ from auth_utils import verify_password, get_password_hash, create_access_token, 
 import requests
 import os
 from dotenv import load_dotenv
+from supabase_config import get_supabase_client, get_supabase_admin_client
 
 load_dotenv()
 
@@ -43,112 +44,163 @@ class UserResponse(BaseModel):
     full_name: Optional[str]
 
 
-def supabase_request(method: str, table: str, data: dict = None, filters: dict = None):
-    """Helper function to make Supabase REST API requests"""
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation"
-    }
+# def supabase_request(method: str, table: str, data: dict = None, filters: dict = None):
+#     """Helper function to make Supabase REST API requests"""
+#     url = f"{SUPABASE_URL}/rest/v1/{table}"
+#     headers = {
+#         "apikey": SUPABASE_KEY,
+#         "Authorization": f"Bearer {SUPABASE_KEY}",
+#         "Content-Type": "application/json",
+#         "Prefer": "return=representation"
+#     }
     
-    if method == "GET":
-        params = {}
-        if filters:
-            for key, value in filters.items():
-                params[key] = f"eq.{value}"
-        response = requests.get(url, headers=headers, params=params)
-    elif method == "POST":
-        response = requests.post(url, json=data, headers=headers)
-    elif method == "PUT":
-        response = requests.put(url, json=data, headers=headers)
-    elif method == "DELETE":
-        response = requests.delete(url, headers=headers)
-    else:
-        raise ValueError(f"Unsupported method: {method}")
+#     if method == "GET":
+#         params = {}
+#         if filters:
+#             for key, value in filters.items():
+#                 params[key] = f"eq.{value}"
+#         response = requests.get(url, headers=headers, params=params)
+#     elif method == "POST":
+#         response = requests.post(url, json=data, headers=headers)
+#     elif method == "PUT":
+#         response = requests.put(url, json=data, headers=headers)
+#     elif method == "DELETE":
+#         response = requests.delete(url, headers=headers)
+#     else:
+#         raise ValueError(f"Unsupported method: {method}")
     
-    return response
+#     return response
 
 
-@router.post("/register", response_model=UserResponse)
-async def register(user_data: UserRegister):
-    """Register a new user"""
-    # Check if user already exists
-    try:
-        response = supabase_request("GET", "users", filters={"email": user_data.email})
-        if response.status_code == 200 and response.json():
-            raise HTTPException(status_code=400, detail="User with this email already exists")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error checking existing user: {str(e)}")
-    
-    # Hash the password
-    password_hash = get_password_hash(user_data.password)
-    
-    # Create user in Supabase
-    try:
-        user_data_dict = {
-            'email': user_data.email,
-            'password_hash': password_hash
-        }
-        if user_data.full_name:
-            user_data_dict['full_name'] = user_data.full_name
-        
-        response = supabase_request("POST", "users", data=user_data_dict)
-        
-        if response.status_code not in [200, 201]:
-            raise HTTPException(status_code=500, detail=f"Error creating user: {response.text}")
-        
-        new_user = response.json()[0]
-        
-        return UserResponse(
-            id=new_user['id'],
-            email=new_user['email'],
-            full_name=new_user.get('full_name')
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating user: {str(e)}")
 
+# @router.post("/register", response_model=UserResponse)
+# async def register(user_data: UserRegister):
+#     """Register a new user"""
+#     # Check if user already exists
+#     try:
+#         response = supabase_request("GET", "users", filters={"email": user_data.email})
+#         if response.status_code == 200 and response.json():
+#             raise HTTPException(status_code=400, detail="User with this email already exists")
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error checking existing user: {str(e)}")
+    
+#     # Hash the password
+#     password_hash = get_password_hash(user_data.password)
+    
+#     # Create user in Supabase
+#     try:
+#         user_data_dict = {
+#             'email': user_data.email,
+#             'password_hash': password_hash
+#         }
+#         if user_data.full_name:
+#             user_data_dict['full_name'] = user_data.full_name
+        
+#         response = supabase_request("POST", "users", data=user_data_dict)
+        
+#         if response.status_code not in [200, 201]:
+#             raise HTTPException(status_code=500, detail=f"Error creating user: {response.text}")
+        
+#         new_user = response.json()[0]
+        
+#         return UserResponse(
+#             id=new_user['id'],
+#             email=new_user['email'],
+#             full_name=new_user.get('full_name')
+#         )
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error creating user: {str(e)}")
 
-@router.post("/login", response_model=TokenResponse)
-async def login(user_data: UserLogin):
-    """Login user and return JWT token"""
-    # Find user by email
-    try:
-        response = supabase_request("GET", "users", filters={"email": user_data.email})
-        
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Error fetching user")
-        
-        users = response.json()
-        if not users:
-            raise HTTPException(status_code=401, detail="Invalid email or password")
-        
-        user = users[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching user: {str(e)}")
+@router.post("/register", response_model = UserResponse)
+async def register(user_data : UserRegister):
+    client = get_supabase_admin_client()
+
+    existing = client.table("users").select("*").eq("email", user_data.email).execute()
+    if existing.data:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
     
-    # Verify password
-    if not verify_password(user_data.password, user['password_hash']):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    response = client.table("users").insert({
+        "email": user_data.email,
+        "password_hash": get_password_hash(user_data.password),
+        "full_name": user_data.full_name
+    }).execute()
+
+    user = response.data[0]
     
-    # Create access token
+    return UserResponse(
+        id=user["id"],
+        email=user["email"],
+        full_name=user.get("full_name")
+    )
+
+@router.post("/login", response_model = TokenResponse)
+async def login(user_data : UserLogin):
+    client = get_supabase_admin_client()
+
+    existing = client.table("users").select("*").eq("email", user_data.email).execute()
+    if not existing.data:
+        raise HTTPException(status_code=400, detail="User with this email does not exist")
+    
+    user = existing.data[0]
+    
+    if not verify_password(user_data.password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Invalid password")
+    
+    # Generate JWT token
     access_token = create_access_token(data={"sub": user['id'], "email": user['email']})
-    
+
     return TokenResponse(
         access_token=access_token,
+        token_type="bearer",
         user={
             "id": user['id'],
             "email": user['email'],
             "full_name": user.get('full_name')
         }
     )
+
+    # sent as python object, FASTAPi serializes it into json format, which is majorly how requests and responses are
+    # sent in mordern system architecture
+
+# @router.post("/login", response_model=TokenResponse)
+# async def login(user_data: UserLogin):
+#     """Login user and return JWT token"""
+#     # Find user by email
+#     try:
+#         response = supabase_request("GET", "users", filters={"email": user_data.email})
+        
+#         if response.status_code != 200:
+#             raise HTTPException(status_code=500, detail="Error fetching user")
+        
+#         users = response.json()
+#         if not users:
+#             raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+#         user = users[0]
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Error fetching user: {str(e)}")
+    
+#     # Verify password
+#     if not verify_password(user_data.password, user['password_hash']):
+#         raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+#     # Create access token
+#     access_token = create_access_token(data={"sub": user['id'], "email": user['email']})
+    
+#     return TokenResponse(
+#         access_token=access_token,
+#         user={
+#             "id": user['id'],
+#             "email": user['email'],
+#             "full_name": user.get('full_name')
+#         }
+#     )
 
 
 @router.get("/me", response_model=UserResponse)

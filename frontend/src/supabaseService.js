@@ -46,10 +46,12 @@ export const chatService = {
     return response.data
   },
 
-  deleteChat: async (chatId) => {
-    const response = await axios.delete(`${API_BASE_URL}/chats/${chatId}`)
+  deleteChat: async (chatId, userId) => {
+    const response = await axios.delete(`${API_BASE_URL}/chats/${chatId}`, {
+      params: userId ? { user_id: userId } : {}
+    })
     return response.data
-  }
+  },
 }
 
 // Database operations
@@ -78,13 +80,11 @@ export const databaseService = {
   },
 
   downloadDatabase: async (databaseId) => {
-    const response = await axios.get(`${API_BASE_URL}/databases/${databaseId}/download`, {
-      responseType: 'arraybuffer'
-    })
+    const response = await axios.get(`${API_BASE_URL}/databases/${databaseId}/download`)
     return {
-      fileData: response.data.file_data,
-      fileName: response.data.file_name,
-      fileSize: response.data.file_size
+      fileData: response.data.fileData,
+      fileName: response.data.fileName,
+      name: response.data.name
     }
   },
 
