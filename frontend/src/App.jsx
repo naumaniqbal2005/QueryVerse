@@ -935,6 +935,24 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
+  // Check session validity on mount and periodically
+  useEffect(() => {
+    const checkSession = () => {
+      if (!authService.validateSession()) {
+        setIsAuthenticated(false);
+        setCurrentPage('#home');
+      }
+    };
+
+    // Check immediately on mount
+    checkSession();
+
+    // Check every minute
+    const interval = setInterval(checkSession, 60000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   // Toggle theme inversion
   const toggleTheme = () => {
     setIsInverted(!isInverted);
