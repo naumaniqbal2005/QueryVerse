@@ -253,15 +253,42 @@ async def get_chat(chat_id: str):
         raise HTTPException(status_code=500, detail=f"Error getting chat: {str(e)}")
 
 async def list_user_chats(user_id: str):
-    """List all chats for a user"""
+    """List all chats for a user with database names"""
     try:
         response = supabase_request("GET", "chats", filters={"user_id": user_id})
         if response.status_code != 200:
             raise HTTPException(status_code=500, detail="Error listing chats")
         
         chats = response.json()
+        print(f"Found {len(chats)} chats for user {user_id}")
+        
+        # For each chat, get the linked database names
+        for chat in chats:
+            try:
+                chat_dbs_response = supabase_request("GET", "chat_databases", filters={"chat_id": chat['id']})
+                if chat_dbs_response.status_code == 200:
+                    chat_dbs = chat_dbs_response.json()
+                    print(f"Chat {chat['id']} has {len(chat_dbs)} database links")
+                    # Get database names for each linked database
+                    database_names = []
+                    for chat_db in chat_dbs:
+                        db_response = supabase_request("GET", "databases", filters={"id": chat_db['database_id']})
+                        if db_response.status_code == 200 and db_response.json():
+                            db_name = db_response.json()[0].get('name', 'Unknown')
+                            print(f"  - Database: {db_name}")
+                            database_names.append(db_name)
+                    chat['database_names'] = database_names
+                    print(f"Chat {chat['id']} database_names: {database_names}")
+                else:
+                    chat['database_names'] = []
+                    print(f"Chat {chat['id']} has no database links")
+            except Exception as e:
+                print(f"Error getting databases for chat {chat['id']}: {str(e)}")
+                chat['database_names'] = []
+        
         # Sort by created_at descending
         chats.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        print(f"Returning {len(chats)} chats with database names")
         return chats
     except HTTPException:
         raise
