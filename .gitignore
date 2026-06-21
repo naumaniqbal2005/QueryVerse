@@ -12,6 +12,7 @@ SUPABASE_SETUP.md
 # Ignore build outputs
 dist/
 build/
+dist/
 
 frontend/node_modules/.package-lock.json
 frontend/node_modules/.vite/deps/_metadata.json
