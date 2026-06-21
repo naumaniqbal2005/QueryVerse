@@ -273,7 +273,7 @@ function ChatPage({ navHidden, onLogout }) {
             formData.append('file', file);
             
             const headers = authService.getAuthHeaders();
-            const uploadResponse = await axios.post('http://localhost:8000/upload-schema', formData, {
+            const uploadResponse = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/upload-schema`, formData, {
               headers: {
                 'Content-Type': 'multipart/form-data',
                 ...headers
@@ -369,7 +369,7 @@ function ChatPage({ navHidden, onLogout }) {
 
     try {
       const headers = authService.getAuthHeaders();
-      const response = await axios.post('http://localhost:8000/chat', {
+      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/chat`, {
         message: input,
         chat_history: messages,
         temperature: temperature,
@@ -456,7 +456,7 @@ function ChatPage({ navHidden, onLogout }) {
 
     try {
       const headers = authService.getAuthHeaders();
-      const response = await axios.post('http://localhost:8000/upload-schema', formData, {
+      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/upload-schema`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
           ...headers

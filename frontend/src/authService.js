@@ -5,7 +5,7 @@
 
 import axios from 'axios'
 
-const API_BASE_URL = 'http://localhost:8000/auth'
+const API_BASE_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/auth`
 
 // Set up axios interceptor to handle 401 errors globally
 axios.interceptors.response.use(
