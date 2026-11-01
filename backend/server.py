@@ -47,7 +47,7 @@ security = HTTPBearer()
 # Load GROQ API key from environment variable
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL_NAME = "llama-3.1-8b-instant"
+MODEL_NAME = "openai/gpt-oss-20b"
 
 # Import simple name matcher
 from simple_matcher import SimpleNameMatcher
